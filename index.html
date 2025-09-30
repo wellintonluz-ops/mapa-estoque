@@ -126,9 +126,9 @@
             // --- END FIREBASE SETUP ---
 
             const DEFAULT_INSTRUCTIONS = [
-                { title: 'Porta Pallets 01 ao 10', content: 'Aqui vai a instrução para os porta-pallets de 1 a 10. Ex: Armazenar produtos da Categoria A, alta rotatividade, eletrônicos.' },
-                { title: 'Porta Pallets 11 ao 26', content: 'Instrução para os porta-pallets de 11 a 26. Ex: Armazenar produtos da Categoria B, média rotatividade, eletrodomésticos.' },
-                { title: 'Regra Geral', content: 'Qualquer outra regra geral ou legenda pode ser adicionada aqui.' }
+                { title: 'PORTA PALLETS 01 AO 10', content: 'AQUI VAI A INSTRUÇÃO PARA OS PORTA-PALLETS DE 1 A 10. EX: ARMAZENAR PRODUTOS DA CATEGORIA A, ALTA ROTATIVIDADE, ELETRÔNICOS.' },
+                { title: 'PORTA PALLETS 11 AO 26', content: 'INSTRUÇÃO PARA OS PORTA-PALLETS DE 11 A 26. EX: ARMAZENAR PRODUTOS DA CATEGORIA B, MÉDIA ROTATIVIDADE, ELETRODOMÉSTICOS.' },
+                { title: 'REGRA GERAL', content: 'QUALQUER OUTRA REGRA GERAL OU LEGENDA PODE SER ADICIONADA AQUI.' }
             ];
 
             let INSTRUCTIONS_DATA = [];
@@ -172,7 +172,7 @@
                     console.error("Usuário não autenticado. Não é possível salvar.");
                     return;
                 }
-                const userDocRef = doc(db, "artifacts", appId, "users", userId, "storageMaps", "userData");
+                const userDocRef = doc(db, "artifacts", appId, "users", userId);
                 try {
                     await setDoc(userDocRef, {
                         inventoryState,
@@ -190,7 +190,7 @@
                     console.error("Usuário não autenticado. Não é possível carregar.");
                     return;
                 }
-                const userDocRef = doc(db, "artifacts", appId, "users", userId, "storageMaps", "userData");
+                 const userDocRef = doc(db, "artifacts", appId, "users", userId);
                 const docSnap = await getDoc(userDocRef);
 
                 if (docSnap.exists()) {
@@ -1039,30 +1039,40 @@
             }
             
             // --- INITIAL APP STARTUP ---
-            onAuthStateChanged(auth, async (user) => {
-                if (user) {
-                    userId = user.uid;
-                    await loadData(); // Load data from Firestore
-                    
-                    // Now that data is loaded, build the UI
-                    detailsPanel.textContent = 'Selecione uma posição para ver os detalhes';
-                    updateGlobalStats();
-                    createRackSelector();
-                    const firstRackLink = rackSelector.querySelector('a[data-rack="all"]');
-                    if (firstRackLink) {
-                        setActiveMenuItem(firstRackLink);
-                        displayAllRacks();
-                    } else {
-                         const fallbackLink = rackSelector.querySelector('a');
-                         if(fallbackLink) fallbackLink.click();
+            async function initialize() {
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        await loadData();
+                        
+                        detailsPanel.textContent = 'Selecione uma posição para ver os detalhes';
+                        updateGlobalStats();
+                        createRackSelector();
+                        const firstRackLink = rackSelector.querySelector('a[data-rack="all"]');
+                        if (firstRackLink) {
+                            setActiveMenuItem(firstRackLink);
+                            displayAllRacks();
+                        } else {
+                            const fallbackLink = rackSelector.querySelector('a');
+                            if(fallbackLink) fallbackLink.click();
+                        }
+                    }
+                });
+                
+                const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+                if (initialAuthToken) {
+                    try {
+                        await signInWithCustomToken(auth, initialAuthToken);
+                    } catch (error) {
+                        console.error("Erro ao autenticar com token customizado, tentando anônimo.", error);
+                        await signInAnonymously(auth);
                     }
                 } else {
-                    signInAnonymously(auth).catch((error) => {
-                        console.error("Erro na autenticação anônima:", error);
-                    });
+                    await signInAnonymously(auth);
                 }
-            });
+            }
 
+            initialize();
         });
     </script>
 </body>
