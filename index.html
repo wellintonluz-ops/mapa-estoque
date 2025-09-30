@@ -97,7 +97,7 @@
     <!-- Firebase SDKs -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-app.js";
-        import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore.js";
         import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-auth.js";
 
         document.addEventListener('DOMContentLoaded', () => {
@@ -123,6 +123,8 @@
             const db = getFirestore(app);
             const auth = getAuth(app);
             let userId = null;
+            let isInitialLoad = true;
+            let activeRackId = 'all';
             // --- END FIREBASE SETUP ---
 
             const DEFAULT_INSTRUCTIONS = [
@@ -185,25 +187,54 @@
                 }
             }
 
-            async function loadData() {
+            function setupRealtimeListener() {
                 if (!userId) {
-                    console.error("Usuário não autenticado. Não é possível carregar.");
+                    console.error("User not authenticated. Cannot set up listener.");
                     return;
                 }
-                 const userDocRef = doc(db, "artifacts", appId, "users", userId);
-                const docSnap = await getDoc(userDocRef);
+                const userDocRef = doc(db, "artifacts", appId, "users", userId);
+                
+                onSnapshot(userDocRef, (docSnap) => {
+                    if (docSnap.exists()) {
+                        const data = docSnap.data();
+                        INSTRUCTIONS_DATA = data.INSTRUCTIONS_DATA || DEFAULT_INSTRUCTIONS;
+                        inventoryState = data.inventoryState || {};
+                        PRODUCT_PARAMS_DATA = data.PRODUCT_PARAMS_DATA || [];
+                        PROGRAMMING_DATA = data.PROGRAMMING_DATA || [];
+                    } else {
+                        console.log("No data found for user, creating new document.");
+                        INSTRUCTIONS_DATA = DEFAULT_INSTRUCTIONS;
+                        inventoryState = {};
+                        PRODUCT_PARAMS_DATA = [];
+                        PROGRAMMING_DATA = [];
+                        saveData(); // Create the initial document
+                    }
 
-                if (docSnap.exists()) {
-                    const data = docSnap.data();
-                    INSTRUCTIONS_DATA = data.INSTRUCTIONS_DATA || DEFAULT_INSTRUCTIONS;
-                    inventoryState = data.inventoryState || {};
-                    PRODUCT_PARAMS_DATA = data.PRODUCT_PARAMS_DATA || [];
-                    PROGRAMMING_DATA = data.PROGRAMMING_DATA || [];
-                } else {
-                    // Se não existe, usa os padrões e salva pela primeira vez
-                    INSTRUCTIONS_DATA = DEFAULT_INSTRUCTIONS;
-                    await saveData();
+                    if (isInitialLoad) {
+                        isInitialLoad = false;
+                        detailsPanel.textContent = 'Selecione uma posição para ver os detalhes';
+                        createRackSelector();
+                        const firstRackLink = rackSelector.querySelector(`a[data-rack="${activeRackId}"]`);
+                        if (firstRackLink) {
+                            setActiveMenuItem(firstRackLink);
+                            refreshCurrentView();
+                        }
+                    } else {
+                        refreshCurrentView();
+                    }
+                });
+            }
+
+            function refreshCurrentView() {
+                switch(activeRackId) {
+                    case 'import': displayImportScreen(); break;
+                    case 'instructions': displayInstructions(); break;
+                    case 'params': displayProductParamsScreen(); break;
+                    case 'programming': displayProgrammingScreen(); break;
+                    case 'all': displayAllRacks(); break;
+                    default: displaySingleRack(parseInt(activeRackId, 10)); break;
                 }
+                updateGlobalStats();
             }
 
             function createRackSelector() {
@@ -769,17 +800,9 @@
                 const target = event.target.closest('a');
                 if (target) {
                     event.preventDefault();
+                    activeRackId = target.dataset.rack;
                     setActiveMenuItem(target);
-                    const rackId = target.dataset.rack;
-
-                    switch(rackId) {
-                        case 'import': displayImportScreen(); break;
-                        case 'instructions': displayInstructions(); break;
-                        case 'params': displayProductParamsScreen(); break;
-                        case 'programming': displayProgrammingScreen(); break;
-                        case 'all': displayAllRacks(); break;
-                        default: displaySingleRack(parseInt(rackId, 10)); break;
-                    }
+                    refreshCurrentView();
                 }
             });
 
@@ -933,7 +956,6 @@
                     const currentSimDay = new Date(today.getTime() + i * (1000 * 3600 * 24));
                     const currentSimDayString = currentSimDay.toISOString().split('T')[0];
                     
-                    // Step 1: Simulate consumption for this single day, ONLY if it's a future day
                     if (currentSimDay > today) {
                         const productConsumption = {};
                         PRODUCT_PARAMS_DATA.forEach(param => {
@@ -949,7 +971,7 @@
 
                             const addressesForProduct = Object.keys(simulatedInventory)
                                 .filter(addr => simulatedInventory[addr].item.toUpperCase() === productCode)
-                                .sort(); // Sort to consume from PP01 first
+                                .sort(); 
                             
                             for(const address of addressesForProduct) {
                                 if(consumptionNeeded <= 0) break;
@@ -972,7 +994,6 @@
                         }
                     }
 
-                    // Step 2: Allocate arrivals for this single day
                     const arrivalsForThisDay = PROGRAMMING_DATA.filter(p => p.date === currentSimDayString);
                     for (const arrival of arrivalsForThisDay) {
                         let quantityToAllocate = parseFloat(arrival.quantity);
@@ -995,7 +1016,6 @@
                             }
                         }
                         
-                        // Consolidation: First, try to fill partial pallets of the same product
                         const partialPallets = allLocations
                             .filter(addr => 
                                 simulatedInventory[addr] &&
@@ -1016,7 +1036,6 @@
                             quantityToAllocate -= qtyToAdd;
                         }
 
-                        // If there's still quantity left, fill empty slots
                         if (quantityToAllocate > 0) {
                             for(const address of allLocations){
                                 if(quantityToAllocate <= 0) break;
@@ -1043,19 +1062,7 @@
                 onAuthStateChanged(auth, async (user) => {
                     if (user) {
                         userId = user.uid;
-                        await loadData();
-                        
-                        detailsPanel.textContent = 'Selecione uma posição para ver os detalhes';
-                        updateGlobalStats();
-                        createRackSelector();
-                        const firstRackLink = rackSelector.querySelector('a[data-rack="all"]');
-                        if (firstRackLink) {
-                            setActiveMenuItem(firstRackLink);
-                            displayAllRacks();
-                        } else {
-                            const fallbackLink = rackSelector.querySelector('a');
-                            if(fallbackLink) fallbackLink.click();
-                        }
+                        setupRealtimeListener();
                     }
                 });
                 
