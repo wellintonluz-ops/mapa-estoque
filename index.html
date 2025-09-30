@@ -170,13 +170,13 @@
             }
 
             async function saveData() {
-                if (!userId) {
+                if (!auth.currentUser) {
                     console.error("Usuário não autenticado. Não é possível salvar.");
                     return;
                 }
-                const userDocRef = doc(db, "artifacts", appId, "users", userId, "mapData", "singleton");
+                const publicDocRef = doc(db, "artifacts", appId, "public/data/mapData", "singleton");
                 try {
-                    await setDoc(userDocRef, {
+                    await setDoc(publicDocRef, {
                         inventoryState,
                         INSTRUCTIONS_DATA,
                         PRODUCT_PARAMS_DATA,
@@ -188,13 +188,13 @@
             }
 
             function setupRealtimeListener() {
-                if (!userId) {
+                if (!auth.currentUser) {
                     console.error("User not authenticated. Cannot set up listener.");
                     return;
                 }
-                const userDocRef = doc(db, "artifacts", appId, "users", userId, "mapData", "singleton");
+                const publicDocRef = doc(db, "artifacts", appId, "public/data/mapData", "singleton");
                 
-                onSnapshot(userDocRef, (docSnap) => {
+                onSnapshot(publicDocRef, (docSnap) => {
                     if (docSnap.exists()) {
                         const data = docSnap.data();
                         INSTRUCTIONS_DATA = data.INSTRUCTIONS_DATA || DEFAULT_INSTRUCTIONS;
@@ -202,7 +202,7 @@
                         PRODUCT_PARAMS_DATA = data.PRODUCT_PARAMS_DATA || [];
                         PROGRAMMING_DATA = data.PROGRAMMING_DATA || [];
                     } else {
-                        console.log("No data found for user, creating new document.");
+                        console.log("No data found, creating new public document.");
                         INSTRUCTIONS_DATA = DEFAULT_INSTRUCTIONS;
                         inventoryState = {};
                         PRODUCT_PARAMS_DATA = [];
@@ -599,7 +599,6 @@
                     });
 
                     saveData();
-                    updateGlobalStats();
                     const statusEl = document.getElementById('import-status');
                     statusEl.textContent = `Importação concluída! ${updatedCount} posições atualizadas. ${errorCount} linhas com erro. Atualizando o mapa...`;
                     statusEl.classList.add('text-green-400');
@@ -740,11 +739,8 @@
                 const address = cell.dataset.address;
                 if (inventoryState[address]) {
                     delete inventoryState[address];
-                    cell.classList.remove('filled');
-                    cell.innerHTML = '';
                 } else {
                     inventoryState[address] = { item: 'OCUPADO MANUALMENTE', quantity: '-' };
-                    cell.classList.add('filled');
                 }
                 saveData();
             }
@@ -1056,10 +1052,12 @@
             
             // --- INITIAL APP STARTUP ---
             async function initialize() {
-                onAuthStateChanged(auth, async (user) => {
+                onAuthStateChanged(auth, (user) => {
                     if (user) {
-                        userId = user.uid;
-                        setupRealtimeListener();
+                        userId = user.uid; // Capture the user ID
+                        if(isInitialLoad){
+                           setupRealtimeListener();
+                        }
                     }
                 });
                 
@@ -1069,7 +1067,9 @@
                         await signInWithCustomToken(auth, initialAuthToken);
                     } catch (error) {
                         console.error("Erro ao autenticar com token customizado, tentando anônimo.", error);
-                        await signInAnonymously(auth);
+                        if (!auth.currentUser) {
+                           await signInAnonymously(auth);
+                        }
                     }
                 } else {
                     await signInAnonymously(auth);
