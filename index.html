@@ -174,7 +174,7 @@
                     console.error("Usuário não autenticado. Não é possível salvar.");
                     return;
                 }
-                const userDocRef = doc(db, "artifacts", appId, "users", userId);
+                const userDocRef = doc(db, "artifacts", appId, "users", userId, "mapData", "singleton");
                 try {
                     await setDoc(userDocRef, {
                         inventoryState,
@@ -192,7 +192,7 @@
                     console.error("User not authenticated. Cannot set up listener.");
                     return;
                 }
-                const userDocRef = doc(db, "artifacts", appId, "users", userId);
+                const userDocRef = doc(db, "artifacts", appId, "users", userId, "mapData", "singleton");
                 
                 onSnapshot(userDocRef, (docSnap) => {
                     if (docSnap.exists()) {
@@ -747,9 +747,6 @@
                     cell.classList.add('filled');
                 }
                 saveData();
-                updateRackStats(rackNumber);
-                updateGlobalStats();
-                handleCellClick(cell);
             }
 
             function handleCellClick(cell, sourceInventory = inventoryState) {
