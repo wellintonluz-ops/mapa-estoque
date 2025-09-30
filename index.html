@@ -48,6 +48,25 @@
         .pallet-cell.filled:hover {
             background-color: #1d4ed8; /* blue-700 */
         }
+        .menu-text {
+            transition: opacity 0.2s ease-in-out, width 0.2s ease-in-out;
+        }
+        /* Active menu item styles */
+        .active-menu-item {
+            background-color: #374151; /* gray-700 */
+        }
+        a[data-rack="import"].active-menu-item { background-color: #0F766E; } /* teal-700 */
+        a[data-rack="params"].active-menu-item { background-color: #7E22CE; } /* purple-700 */
+        a[data-rack="programming"].active-menu-item { background-color: #BE185D; } /* pink-700 */
+        a[data-rack="instructions"].active-menu-item { background-color: #4338CA; } /* indigo-700 */
+        a[data-rack="all"].active-menu-item { background-color: #B45309; } /* amber-700 */
+
+        .uppercase-input {
+            text-transform: uppercase;
+        }
+        .uppercase-input::placeholder {
+            text-transform: none;
+        }
     </style>
 </head>
 <body class="bg-gray-900 text-white">
@@ -56,15 +75,14 @@
         <header class="bg-gray-800 shadow-lg p-4 z-30">
             <h1 class="text-2xl font-bold text-center text-amber-400">Mapa de Estoque Interativo</h1>
             <div id="global-stats-panel" class="text-center text-gray-300 mt-2 text-sm"></div>
-            <p id="details-panel" class="text-center text-gray-300 mt-1 h-6">Selecione uma posição para ver os detalhes</p>
+            <p id="details-panel" class="text-center text-gray-300 mt-1 h-6">Carregando dados...</p>
         </header>
 
         <!-- Main Content -->
         <div class="flex flex-1 overflow-hidden">
             <!-- Sidebar with Rack Selector -->
-            <nav class="w-48 bg-gray-800 p-4 overflow-y-auto custom-scrollbar">
-                <h2 class="text-lg font-semibold mb-4 text-center">Navegação</h2>
-                <ul id="rack-selector" class="space-y-2">
+            <nav id="sidebar" class="group w-16 hover:w-56 bg-gray-800 p-2 overflow-y-auto custom-scrollbar transition-all duration-300 ease-in-out">
+                <ul id="rack-selector" class="space-y-2 mt-4">
                     <!-- Links will be generated here -->
                 </ul>
             </nav>
@@ -75,19 +93,37 @@
             </main>
         </div>
     </div>
+    
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-app.js";
+        import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-auth.js";
 
-    <script>
         document.addEventListener('DOMContentLoaded', () => {
             const rackSelector = document.getElementById('rack-selector');
             const mainContent = document.getElementById('main-content');
             const detailsPanel = document.getElementById('details-panel');
             const globalStatsPanel = document.getElementById('global-stats-panel');
             
-            const STORAGE_KEYS = {
-                INVENTORY: 'warehouse_inventoryState_v3', // Changed key for new data format
-                INSTRUCTIONS: 'warehouse_instructionsData_v2',
-                PRODUCT_PARAMS: 'warehouse_productParams_v1'
+            // --- FIREBASE SETUP ---
+            const firebaseConfigFromEnv = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+            const firebaseConfig = firebaseConfigFromEnv || {
+                apiKey: "AIzaSyDi9i59ySZSaBnniQUwBKcKlst2PA8AgTc",
+                authDomain: "mapa-estoque.firebaseapp.com",
+                projectId: "mapa-estoque",
+                storageBucket: "mapa-estoque.appspot.com",
+                messagingSenderId: "877978797929",
+                appId: "1:877978797929:web:3a6c7c006a32fe5d0b5ff8",
+                measurementId: "G-4GNC5SKF17"
             };
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+            const app = initializeApp(firebaseConfig);
+            const db = getFirestore(app);
+            const auth = getAuth(app);
+            let userId = null;
+            // --- END FIREBASE SETUP ---
 
             const DEFAULT_INSTRUCTIONS = [
                 { title: 'Porta Pallets 01 ao 10', content: 'Aqui vai a instrução para os porta-pallets de 1 a 10. Ex: Armazenar produtos da Categoria A, alta rotatividade, eletrônicos.' },
@@ -96,8 +132,9 @@
             ];
 
             let INSTRUCTIONS_DATA = [];
-            let inventoryState = {}; // Key: address, Value: {item: string, quantity: string, percentage: number}
+            let inventoryState = {};
             let PRODUCT_PARAMS_DATA = [];
+            let PROGRAMMING_DATA = [];
             
             const WAREHOUSE_CONFIG = {
                 totalRacks: 26,
@@ -113,14 +150,14 @@
             
             let selectedCell = null;
 
-            function updateGlobalStats() {
+            function updateGlobalStats(sourceInventory = inventoryState) {
                 let grandTotalPositions = 0;
                 for (let i = 1; i <= WAREHOUSE_CONFIG.totalRacks; i++) {
                     const cols = WAREHOUSE_CONFIG.getColsForRack(i);
                     grandTotalPositions += cols * WAREHOUSE_CONFIG.levelLetters.length * WAREHOUSE_CONFIG.sides.length;
                 }
 
-                const totalOccupied = Object.keys(inventoryState).length;
+                const totalOccupied = Object.keys(sourceInventory).length;
                 const globalPercentage = grandTotalPositions > 0 ? ((totalOccupied / grandTotalPositions) * 100).toFixed(1) : 0;
 
                 globalStatsPanel.innerHTML = `
@@ -130,84 +167,90 @@
                 `;
             }
 
-            function saveData() {
-                localStorage.setItem(STORAGE_KEYS.INVENTORY, JSON.stringify(inventoryState));
-                localStorage.setItem(STORAGE_KEYS.INSTRUCTIONS, JSON.stringify(INSTRUCTIONS_DATA));
-                localStorage.setItem(STORAGE_KEYS.PRODUCT_PARAMS, JSON.stringify(PRODUCT_PARAMS_DATA));
+            async function saveData() {
+                if (!userId) {
+                    console.error("Usuário não autenticado. Não é possível salvar.");
+                    return;
+                }
+                const userDocRef = doc(db, "artifacts", appId, "users", userId, "storageMaps", "userData");
+                try {
+                    await setDoc(userDocRef, {
+                        inventoryState,
+                        INSTRUCTIONS_DATA,
+                        PRODUCT_PARAMS_DATA,
+                        PROGRAMMING_DATA
+                    });
+                } catch (error) {
+                    console.error("Erro ao salvar dados no Firestore: ", error);
+                }
             }
 
-            function loadData() {
-                const savedInstructions = localStorage.getItem(STORAGE_KEYS.INSTRUCTIONS);
-                INSTRUCTIONS_DATA = savedInstructions ? JSON.parse(savedInstructions) : DEFAULT_INSTRUCTIONS;
+            async function loadData() {
+                if (!userId) {
+                    console.error("Usuário não autenticado. Não é possível carregar.");
+                    return;
+                }
+                const userDocRef = doc(db, "artifacts", appId, "users", userId, "storageMaps", "userData");
+                const docSnap = await getDoc(userDocRef);
 
-                const savedInventory = localStorage.getItem(STORAGE_KEYS.INVENTORY);
-                inventoryState = savedInventory ? JSON.parse(savedInventory) : {};
-
-                const savedParams = localStorage.getItem(STORAGE_KEYS.PRODUCT_PARAMS);
-                PRODUCT_PARAMS_DATA = savedParams ? JSON.parse(savedParams) : [];
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    INSTRUCTIONS_DATA = data.INSTRUCTIONS_DATA || DEFAULT_INSTRUCTIONS;
+                    inventoryState = data.inventoryState || {};
+                    PRODUCT_PARAMS_DATA = data.PRODUCT_PARAMS_DATA || [];
+                    PROGRAMMING_DATA = data.PROGRAMMING_DATA || [];
+                } else {
+                    // Se não existe, usa os padrões e salva pela primeira vez
+                    INSTRUCTIONS_DATA = DEFAULT_INSTRUCTIONS;
+                    await saveData();
+                }
             }
 
             function createRackSelector() {
                 rackSelector.innerHTML = '';
-                
-                const importListItem = document.createElement('li');
-                const importLink = document.createElement('a');
-                importLink.href = '#';
-                importLink.textContent = 'Importar Relatório';
-                importLink.dataset.rack = 'import';
-                importLink.className = 'block w-full text-center px-3 py-2 rounded-md text-sm font-medium bg-teal-600 text-white hover:bg-teal-500 transition-colors duration-150 mb-2';
-                importListItem.appendChild(importLink);
-                rackSelector.appendChild(importListItem);
 
-                const paramsListItem = document.createElement('li');
-                const paramsLink = document.createElement('a');
-                paramsLink.href = '#';
-                paramsLink.textContent = 'Parâmetros';
-                paramsLink.dataset.rack = 'params';
-                paramsLink.className = 'block w-full text-center px-3 py-2 rounded-md text-sm font-medium bg-purple-600 text-white hover:bg-purple-500 transition-colors duration-150 mb-2';
-                paramsListItem.appendChild(paramsLink);
-                rackSelector.appendChild(paramsListItem);
+                const icons = {
+                    import: `<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>`,
+                    params: `<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>`,
+                    programming: `<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>`,
+                    instructions: `<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>`,
+                    all: `<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" /></svg>`,
+                    rack: `<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg>`
+                };
 
-                const instrListItem = document.createElement('li');
-                const instrLink = document.createElement('a');
-                instrLink.href = '#';
-                instrLink.textContent = 'Instruções';
-                instrLink.dataset.rack = 'instructions';
-                instrLink.className = 'block w-full text-center px-3 py-2 rounded-md text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-500 transition-colors duration-150 mb-2';
-                instrListItem.appendChild(instrLink);
-                rackSelector.appendChild(instrListItem);
-                
-                const allListItem = document.createElement('li');
-                const allLink = document.createElement('a');
-                allLink.href = '#';
-                allLink.textContent = 'Visualizar Todos';
-                allLink.dataset.rack = 'all';
-                allLink.className = 'block w-full text-center px-3 py-2 rounded-md text-sm font-medium bg-amber-600 text-white hover:bg-amber-500 transition-colors duration-150 mb-4';
-                allListItem.appendChild(allLink);
-                rackSelector.appendChild(allListItem);
-
-                const separator = document.createElement('hr');
-                separator.className = "border-gray-600 my-4";
-                rackSelector.appendChild(separator);
-                
-                const rackTitle = document.createElement('h3');
-                rackTitle.textContent = "Porta Pallets";
-                rackTitle.className = "text-center text-gray-400 text-sm font-bold uppercase mb-2";
-                rackSelector.appendChild(rackTitle);
-
-                for (let i = 1; i <= WAREHOUSE_CONFIG.totalRacks; i++) {
+                const createMenuItem = (rackId, text, icon, colorClasses, isRackLink = false) => {
                     const listItem = document.createElement('li');
                     const link = document.createElement('a');
                     link.href = '#';
-                    link.textContent = `Porta Pallet ${String(i).padStart(2, '0')}`;
-                    link.dataset.rack = i;
-                    link.className = 'block w-full text-center px-3 py-2 rounded-md text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-white transition-colors duration-150';
+                    link.dataset.rack = rackId;
+                    let finalClasses = `flex items-center w-full justify-center group-hover:justify-start p-2 rounded-md font-medium transition-colors duration-200 ${colorClasses}`;
+                    if (isRackLink) finalClasses += ' rack-link';
+                    link.className = finalClasses;
+                    
+                    link.innerHTML = `
+                        <div class="flex-shrink-0">${icon}</div>
+                        <span class="menu-text opacity-0 w-0 group-hover:w-auto group-hover:opacity-100 whitespace-nowrap ml-3 transition-all duration-200">${text}</span>
+                    `;
                     listItem.appendChild(link);
                     rackSelector.appendChild(listItem);
+                };
+
+                createMenuItem('import', 'Importar Relatório', icons.import, 'bg-teal-600 text-white hover:bg-teal-500');
+                createMenuItem('params', 'Parâmetros', icons.params, 'bg-purple-600 text-white hover:bg-purple-500');
+                createMenuItem('programming', 'Programação', icons.programming, 'bg-pink-600 text-white hover:bg-pink-500');
+                createMenuItem('instructions', 'Instruções', icons.instructions, 'bg-indigo-600 text-white hover:bg-indigo-500');
+                createMenuItem('all', 'Visualizar Todos', icons.all, 'bg-amber-600 text-white hover:bg-amber-500');
+                
+                const separator = document.createElement('hr');
+                separator.className = "border-gray-700 my-4";
+                rackSelector.appendChild(separator);
+                
+                for (let i = 1; i <= WAREHOUSE_CONFIG.totalRacks; i++) {
+                     createMenuItem(i, `Porta Pallet ${String(i).padStart(2, '0')}`, icons.rack, 'text-gray-400 hover:bg-gray-700 hover:text-white', true);
                 }
             }
             
-            function createRackGridElement(rackNumber) {
+            function createRackGridElement(rackNumber, sourceInventory = inventoryState) {
                 const cols = WAREHOUSE_CONFIG.getColsForRack(rackNumber);
                 const grid = document.createElement('div');
                 grid.className = 'grid gap-1.5';
@@ -223,27 +266,30 @@
                             const cell = document.createElement('div');
                             const address = `PP${String(rackNumber).padStart(2, '0')}.${String(col).padStart(2, '0')}.${levelNum}.${side}`;
                             cell.dataset.address = address;
-
-                            let cellClasses = 'pallet-cell flex-1 h-full bg-gray-700 cursor-pointer border-2 border-transparent flex items-center justify-center';
                             
-                            // Adiciona uma borda à direita da célula 'A' para criar uma divisão visual robusta
+                            let cellClasses = 'pallet-cell flex-1 h-full bg-gray-700 cursor-pointer flex items-center justify-center';
                             if (index === 0) {
-                                cellClasses += ' border-r-2 border-gray-900'; 
+                                cellClasses += ' border-r border-black';
                             }
                             cell.className = cellClasses;
 
-                            cell.title = address;
-
-                            const data = inventoryState[address];
+                            const data = sourceInventory[address];
                             if (data) {
                                 cell.classList.add('filled');
+                                cell.title = `${address}\nProduto: ${data.item}\nQtd: ${data.quantity}`;
                                 if (data.percentage !== undefined && !isNaN(data.percentage)) {
                                     cell.innerHTML = `<span class="text-xs font-bold pointer-events-none">${Math.round(data.percentage)}%</span>`;
                                 }
+                            } else {
+                                cell.title = address;
                             }
 
-                            cell.addEventListener('click', () => handleCellClick(cell));
-                            cell.addEventListener('dblclick', () => handleCellToggle(cell, rackNumber));
+                            cell.addEventListener('click', () => handleCellClick(cell, sourceInventory));
+                            cell.addEventListener('dblclick', () => {
+                                if (sourceInventory === inventoryState) {
+                                    handleCellToggle(cell, rackNumber);
+                                }
+                            });
                             positionContainer.appendChild(cell);
                         });
                         grid.appendChild(positionContainer);
@@ -252,7 +298,7 @@
                 return grid;
             }
             
-            function updateRackStats(rackNumber) {
+            function updateRackStats(rackNumber, sourceInventory = inventoryState) {
                 const statsContainer = document.getElementById(`stats-rack-${rackNumber}`);
                 if (!statsContainer) return;
 
@@ -261,7 +307,7 @@
                 
                 let filledCount = 0;
                 const rackPrefix = `PP${String(rackNumber).padStart(2, '0')}`;
-                Object.keys(inventoryState).forEach(address => {
+                Object.keys(sourceInventory).forEach(address => {
                     if (address.startsWith(rackPrefix)) {
                         filledCount++;
                     }
@@ -301,8 +347,48 @@
                 resetSelection();
             }
 
-            function displayAllRacks() {
+            function displayAllRacks(sourceInventory = inventoryState, simulationDate = null) {
                 mainContent.innerHTML = '';
+                
+                const simulationHeader = document.createElement('div');
+                simulationHeader.className = 'flex justify-center items-center gap-4 mb-8 p-4 bg-gray-800 rounded-lg';
+                simulationHeader.innerHTML = `
+                    <div>
+                        <label for="simulation-date" class="mr-2 font-semibold">Simular para o dia:</label>
+                        <input type="date" id="simulation-date" class="bg-gray-700 text-white rounded-md p-2">
+                    </div>
+                    <button id="run-simulation-btn" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-md font-semibold">Simular Dia</button>
+                    <button id="clear-simulation-btn" class="px-4 py-2 bg-gray-600 hover:bg-gray-500 rounded-md font-semibold">Limpar Simulação</button>
+                    <p id="simulation-status" class="text-sm text-gray-400 h-6 ml-4"></p>
+                `;
+                mainContent.appendChild(simulationHeader);
+
+                if (simulationDate) {
+                    const activeSimDiv = document.createElement('div');
+                    activeSimDiv.className = 'text-center mb-4 p-3 bg-yellow-800 rounded-md';
+                    activeSimDiv.innerHTML = `<span class="font-bold">Modo de Simulação Ativo para o dia: ${new Date(simulationDate + 'T00:00:00').toLocaleDateString('pt-BR')}</span>`;
+                    mainContent.insertBefore(activeSimDiv, mainContent.childNodes[1]);
+                }
+
+                document.getElementById('run-simulation-btn').onclick = () => {
+                    const date = document.getElementById('simulation-date').value;
+                    const statusEl = document.getElementById('simulation-status');
+                    if (date) {
+                        if(statusEl) statusEl.textContent = 'Calculando...';
+                        setTimeout(() => {
+                            runSimulation(date);
+                        }, 50); 
+                    } else {
+                        if(statusEl) statusEl.textContent = 'Selecione uma data.';
+                        setTimeout(() => { if(statusEl) statusEl.textContent = ''; }, 2000);
+                    }
+                };
+                
+                document.getElementById('clear-simulation-btn').onclick = () => {
+                    displayAllRacks(inventoryState);
+                    updateGlobalStats(inventoryState);
+                };
+
                 for (let i = 1; i <= WAREHOUSE_CONFIG.totalRacks; i++) {
                     const rackContainer = document.createElement('div');
                     rackContainer.className = 'mb-12';
@@ -312,12 +398,12 @@
                     const stats = document.createElement('div');
                     stats.id = `stats-rack-${i}`;
                     stats.className = 'mb-3';
-                    const grid = createRackGridElement(i);
+                    const grid = createRackGridElement(i, sourceInventory);
                     rackContainer.appendChild(title);
                     rackContainer.appendChild(stats);
                     rackContainer.appendChild(grid);
                     mainContent.appendChild(rackContainer);
-                    updateRackStats(i);
+                    updateRackStats(i, sourceInventory);
                 }
                 resetSelection();
             }
@@ -357,7 +443,7 @@
                     const titleInput = document.createElement('input');
                     titleInput.type = 'text';
                     titleInput.value = item.title;
-                    titleInput.className = 'text-lg font-semibold text-white bg-transparent border-b-2 border-gray-700 focus:border-amber-500 outline-none w-full mr-4 transition';
+                    titleInput.className = 'uppercase-input text-lg font-semibold text-white bg-transparent border-b-2 border-gray-700 focus:border-amber-500 outline-none w-full mr-4 transition';
                     blockHeader.appendChild(titleInput);
                     
                     const deleteButton = document.createElement('button');
@@ -370,7 +456,7 @@
                     blockHeader.appendChild(deleteButton);
 
                     const contentTextarea = document.createElement('textarea');
-                    contentTextarea.className = 'w-full h-24 bg-gray-700 text-gray-300 p-2 rounded-md border border-gray-600 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition';
+                    contentTextarea.className = 'uppercase-input w-full h-24 bg-gray-700 text-gray-300 p-2 rounded-md border border-gray-600 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition';
                     contentTextarea.value = item.content;
 
                     instructionBlock.appendChild(blockHeader);
@@ -410,7 +496,7 @@
                             <p class="text-gray-300 mb-4">Cole o conteúdo do seu relatório na área abaixo ou carregue um arquivo (.txt, .csv).</p>
                             <p class="text-sm text-gray-400 mb-4">O formato esperado é: <code class="bg-gray-900 px-2 py-1 rounded">POSIÇÃO,Itens,Quantidade</code> por linha. O separador pode ser vírgula, ponto e vírgula ou tabulação.</p>
                             
-                            <textarea id="import-textarea" class="w-full h-48 bg-gray-700 text-gray-300 p-3 rounded-md border border-gray-600 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition" placeholder="Ex: PP01.01.01.A,Produto Exemplo,100&#10;PP01.01.01.B,Produto Y,50&#10;PP01.01.02.A,Produto Z,200&#10;PP01.01.02.B,; (Para esvaziar esta posição)"></textarea>
+                            <textarea id="import-textarea" class="uppercase-input w-full h-48 bg-gray-700 text-gray-300 p-3 rounded-md border border-gray-600 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition" placeholder="Ex: PP01.01.01.A,PRODUTO EXEMPLO,100&#10;PP01.01.01.B,PRODUTO Y,50&#10;PP01.01.02.A,PRODUTO Z,200&#10;PP01.01.02.B,; (Para esvaziar esta posição)"></textarea>
 
                             <div class="mt-4 flex items-center justify-between">
                                 <label for="file-upload" class="cursor-pointer px-4 py-2 bg-gray-600 hover:bg-gray-500 rounded-md font-semibold transition-colors duration-150">
@@ -488,15 +574,8 @@
                     statusEl.classList.add('text-green-400');
                     
                     setTimeout(() => {
-                        displayAllRacks();
-                        
-                        document.querySelectorAll('#rack-selector a').forEach(a => {
-                            a.classList.remove('bg-gray-900', 'text-amber-400', 'bg-teal-500', 'bg-purple-500', 'bg-indigo-500', 'bg-amber-500');
-                        });
                         const allLink = document.querySelector('a[data-rack="all"]');
-                        if (allLink) {
-                            allLink.classList.add('bg-amber-500');
-                        }
+                        if (allLink) allLink.click();
                     }, 2500);
                 });
             }
@@ -521,11 +600,29 @@
                         confirmation.remove();
                     }, 2500);
                 }
+                
+                const buttonsContainer = document.createElement('div');
+                buttonsContainer.className = 'flex items-center gap-4';
+
+                const importLabel = document.createElement('label');
+                importLabel.htmlFor = 'params-file-upload';
+                importLabel.className = 'cursor-pointer px-4 py-2 bg-gray-600 hover:bg-gray-500 rounded-md font-semibold transition-colors duration-150';
+                importLabel.textContent = 'Carregar Lote (.csv)';
+                buttonsContainer.appendChild(importLabel);
+                
+                const fileInput = document.createElement('input');
+                fileInput.id = 'params-file-upload';
+                fileInput.type = 'file';
+                fileInput.className = 'hidden';
+                fileInput.accept = '.csv,.txt';
+                buttonsContainer.appendChild(fileInput);
 
                 const addButton = document.createElement('button');
                 addButton.textContent = 'Adicionar Novo Produto';
                 addButton.className = 'px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-md font-semibold transition-colors duration-150';
-                header.appendChild(addButton);
+                buttonsContainer.appendChild(addButton);
+
+                header.appendChild(buttonsContainer);
                 mainContent.appendChild(header);
 
                 const container = document.createElement('div');
@@ -547,9 +644,9 @@
                     paramBlock.className = 'param-block bg-gray-800 p-3 rounded-lg grid grid-cols-12 gap-4 items-center';
                     
                     paramBlock.innerHTML = `
-                        <input type="text" value="${item.code || ''}" placeholder="Ex: PROD-001" class="param-code col-span-5 bg-gray-700 text-white p-2 rounded-md border border-gray-600 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition">
+                        <input type="text" value="${item.code || ''}" placeholder="Ex: PROD-001" class="uppercase-input param-code col-span-5 bg-gray-700 text-white p-2 rounded-md border border-gray-600 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition">
                         <input type="number" value="${item.maxQty || ''}" placeholder="Ex: 100" class="param-max-qty col-span-3 bg-gray-700 text-white p-2 rounded-md border border-gray-600 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition text-center">
-                        <input type="text" value="${item.avgOutflow || ''}" placeholder="Ex: 10/dia" class="param-avg-outflow col-span-3 bg-gray-700 text-white p-2 rounded-md border border-gray-600 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition text-center">
+                        <input type="text" value="${item.avgOutflow || ''}" placeholder="Ex: 10/dia" class="uppercase-input param-avg-outflow col-span-3 bg-gray-700 text-white p-2 rounded-md border border-gray-600 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition text-center">
                         <button class="remove-btn col-span-1 px-3 py-2 bg-red-700 hover:bg-red-600 rounded-md text-sm font-medium transition-colors duration-150">Remover</button>
                     `;
                     
@@ -557,11 +654,30 @@
                     parent.appendChild(paramBlock);
                 };
                 
-                addButton.onclick = () => {
-                    createParamBlock({}, container);
-                };
+                addButton.onclick = () => createParamBlock({}, container);
 
                 PRODUCT_PARAMS_DATA.forEach(item => createParamBlock(item, container));
+                
+                fileInput.addEventListener('change', (event) => {
+                    const file = event.target.files[0];
+                    if (file) {
+                        const reader = new FileReader();
+                        reader.onload = (e) => {
+                            const text = e.target.result;
+                            const lines = text.split(/\r?\n/).filter(line => line.trim());
+                            
+                            lines.forEach(line => {
+                                if (line.toLowerCase().includes('código')) return; // skip header
+                                const parts = line.split(/[,;\t]/);
+                                if (parts.length >= 3) {
+                                    createParamBlock({ code: parts[0], maxQty: parts[1], avgOutflow: parts[2] }, container);
+                                }
+                            });
+                        };
+                        reader.readAsText(file);
+                    }
+                });
+
 
                 const saveButton = document.createElement('button');
                 saveButton.textContent = 'Salvar Alterações';
@@ -596,7 +712,7 @@
                     cell.classList.remove('filled');
                     cell.innerHTML = '';
                 } else {
-                    inventoryState[address] = { item: 'Ocupado Manualmente', quantity: '-' };
+                    inventoryState[address] = { item: 'OCUPADO MANUALMENTE', quantity: '-' };
                     cell.classList.add('filled');
                 }
                 saveData();
@@ -605,7 +721,7 @@
                 handleCellClick(cell);
             }
 
-            function handleCellClick(cell) {
+            function handleCellClick(cell, sourceInventory = inventoryState) {
                 if (selectedCell) {
                     selectedCell.classList.remove('selected');
                 }
@@ -616,7 +732,7 @@
                 cell.classList.add('selected');
                 selectedCell = cell;
                 const address = cell.dataset.address;
-                const data = inventoryState[address];
+                const data = sourceInventory[address];
 
                 if (data) {
                     let detailsHTML = `
@@ -640,45 +756,313 @@
                     selectedCell = null;
                 }
             }
+            
+            function setActiveMenuItem(target) {
+                if(!target) return;
+                document.querySelectorAll('#rack-selector a').forEach(a => {
+                    a.classList.remove('active-menu-item');
+                });
+                target.classList.add('active-menu-item');
+            }
 
             rackSelector.addEventListener('click', (event) => {
                 const target = event.target.closest('a');
                 if (target) {
                     event.preventDefault();
+                    setActiveMenuItem(target);
                     const rackId = target.dataset.rack;
-
-                    document.querySelectorAll('#rack-selector a').forEach(a => a.classList.remove('bg-gray-900', 'text-amber-400'));
-                    target.classList.add('bg-gray-900', 'text-amber-400');
-                    
-                    if (['import', 'instructions', 'all', 'params'].includes(rackId)) {
-                        target.classList.remove('bg-gray-900', 'text-amber-400');
-                        if(rackId === 'import') target.classList.add('bg-teal-500');
-                        if(rackId === 'instructions') target.classList.add('bg-indigo-500');
-                        if(rackId === 'all') target.classList.add('bg-amber-500');
-                        if(rackId === 'params') target.classList.add('bg-purple-500');
-                    }
 
                     switch(rackId) {
                         case 'import': displayImportScreen(); break;
                         case 'instructions': displayInstructions(); break;
                         case 'params': displayProductParamsScreen(); break;
+                        case 'programming': displayProgrammingScreen(); break;
                         case 'all': displayAllRacks(); break;
                         default: displaySingleRack(parseInt(rackId, 10)); break;
                     }
                 }
             });
 
-            // Initial setup
-            loadData();
-            updateGlobalStats();
-            createRackSelector();
-            const firstRackLink = rackSelector.querySelector('a[data-rack="1"]');
-            if (firstRackLink) {
-                 firstRackLink.classList.add('bg-gray-900', 'text-amber-400');
-                 displaySingleRack(1);
-            } else {
-                 displayInstructions();
+            function displayProgrammingScreen(showConfirmation = false) {
+                mainContent.innerHTML = '';
+                
+                const header = document.createElement('div');
+                header.className = 'flex justify-between items-center mb-6';
+                
+                const title = document.createElement('h2');
+                title.className = 'text-2xl font-bold text-amber-400';
+                title.textContent = 'Programação de Chegadas';
+                header.appendChild(title);
+
+                 if (showConfirmation) {
+                    const confirmation = document.createElement('span');
+                    confirmation.className = 'ml-4 text-lg font-normal text-green-400';
+                    confirmation.textContent = 'Salvo com sucesso!';
+                    title.appendChild(confirmation);
+                    setTimeout(() => confirmation.remove(), 2500);
+                }
+
+                const buttonsContainer = document.createElement('div');
+                buttonsContainer.className = 'flex items-center gap-4';
+
+                const importLabel = document.createElement('label');
+                importLabel.htmlFor = 'programming-file-upload';
+                importLabel.className = 'cursor-pointer px-4 py-2 bg-gray-600 hover:bg-gray-500 rounded-md font-semibold transition-colors duration-150';
+                importLabel.textContent = 'Carregar Lote (.csv)';
+                buttonsContainer.appendChild(importLabel);
+                
+                const fileInput = document.createElement('input');
+                fileInput.id = 'programming-file-upload';
+                fileInput.type = 'file';
+                fileInput.className = 'hidden';
+                fileInput.accept = '.csv,.txt';
+                buttonsContainer.appendChild(fileInput);
+
+                const addButton = document.createElement('button');
+                addButton.textContent = 'Adicionar Programação';
+                addButton.className = 'px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-md font-semibold transition-colors duration-150';
+                buttonsContainer.appendChild(addButton);
+
+                header.appendChild(buttonsContainer);
+                mainContent.appendChild(header);
+
+
+                const container = document.createElement('div');
+                container.id = 'programming-container';
+                container.className = 'space-y-4';
+
+                const tableHeader = document.createElement('div');
+                tableHeader.className = 'grid grid-cols-12 gap-4 px-4 text-sm font-bold text-gray-400 uppercase';
+                tableHeader.innerHTML = `
+                    <div class="col-span-3">Data de Chegada</div>
+                    <div class="col-span-5">Código do Produto</div>
+                    <div class="col-span-3 text-center">Quantidade</div>
+                    <div class="col-span-1"></div>
+                `;
+                container.appendChild(tableHeader);
+
+                const createProgrammingBlock = (item, parent) => {
+                    const block = document.createElement('div');
+                    block.className = 'programming-block bg-gray-800 p-3 rounded-lg grid grid-cols-12 gap-4 items-center';
+                    
+                    block.innerHTML = `
+                        <input type="date" value="${item.date || ''}" class="programming-date col-span-3 bg-gray-700 text-white p-2 rounded-md border border-gray-600 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition">
+                        <input type="text" value="${item.code || ''}" placeholder="Ex: PROD-001" class="uppercase-input programming-code col-span-5 bg-gray-700 text-white p-2 rounded-md border border-gray-600 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition">
+                        <input type="number" value="${item.quantity || ''}" placeholder="Ex: 100" class="programming-quantity col-span-3 bg-gray-700 text-white p-2 rounded-md border border-gray-600 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition text-center">
+                        <button class="remove-btn col-span-1 px-3 py-2 bg-red-700 hover:bg-red-600 rounded-md text-sm font-medium transition-colors duration-150">Remover</button>
+                    `;
+                    
+                    block.querySelector('.remove-btn').onclick = () => block.remove();
+                    parent.appendChild(block);
+                };
+                
+                addButton.onclick = () => createProgrammingBlock({}, container);
+
+                // Sort by date before displaying
+                PROGRAMMING_DATA.sort((a,b) => new Date(a.date) - new Date(b.date));
+                PROGRAMMING_DATA.forEach(item => createProgrammingBlock(item, container));
+                
+                fileInput.addEventListener('change', (event) => {
+                    const file = event.target.files[0];
+                    if (file) {
+                        const reader = new FileReader();
+                        reader.onload = (e) => {
+                            const text = e.target.result;
+                            const lines = text.split(/\r?\n/).filter(line => line.trim());
+                            lines.forEach(line => {
+                                if (line.toLowerCase().includes('data')) return; // skip header
+                                const parts = line.split(/[,;\t]/);
+                                if (parts.length >= 3) {
+                                    let date = parts[0].trim();
+                                    // Handle DD/MM/YYYY format
+                                    if (date.includes('/')) {
+                                        const [day, month, year] = date.split('/');
+                                        date = `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+                                    }
+                                    createProgrammingBlock({ date: date, code: parts[1], quantity: parts[2] }, container);
+                                }
+                            });
+                        };
+                        reader.readAsText(file);
+                    }
+                });
+
+                const saveButton = document.createElement('button');
+                saveButton.textContent = 'Salvar Alterações';
+                saveButton.className = 'mt-6 px-4 py-2 bg-green-600 hover:bg-green-500 rounded-md font-semibold transition-colors duration-150';
+                saveButton.onclick = () => {
+                    const newData = [];
+                    mainContent.querySelectorAll('.programming-block').forEach(block => {
+                        const date = block.querySelector('.programming-date').value;
+                        const code = block.querySelector('.programming-code').value.trim();
+                        const quantity = block.querySelector('.programming-quantity').value.trim();
+                        if (date && code && quantity) {
+                            newData.push({ date, code, quantity });
+                        }
+                    });
+                    
+                    PROGRAMMING_DATA = newData;
+                    saveData();
+                    displayProgrammingScreen(true);
+                };
+                
+                mainContent.appendChild(container);
+                mainContent.appendChild(saveButton);
             }
+
+            function runSimulation(simulationDate) {
+                let simulatedInventory = JSON.parse(JSON.stringify(inventoryState));
+                
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+
+                const simDate = new Date(simulationDate + 'T00:00:00');
+                simDate.setHours(0,0,0,0);
+                
+                if (simDate < today) {
+                    const statusEl = document.getElementById('simulation-status');
+                    if(statusEl) statusEl.textContent = 'Não é possível simular para uma data passada.';
+                    setTimeout(() => { if(statusEl) statusEl.textContent = ''; }, 3000);
+                    return;
+                }
+                
+                const timeDiff = simDate.getTime() - today.getTime();
+                const dayDifference = Math.ceil(timeDiff / (1000 * 3600 * 24));
+                
+                for (let i = 0; i <= dayDifference; i++) {
+                    const currentSimDay = new Date(today.getTime() + i * (1000 * 3600 * 24));
+                    const currentSimDayString = currentSimDay.toISOString().split('T')[0];
+                    
+                    // Step 1: Simulate consumption for this single day, ONLY if it's a future day
+                    if (currentSimDay > today) {
+                        const productConsumption = {};
+                        PRODUCT_PARAMS_DATA.forEach(param => {
+                            const dailyConsumption = parseFloat(String(param.avgOutflow).replace(/[^0-9.]/g, '')) || 0;
+                            if(dailyConsumption > 0){
+                               productConsumption[param.code.toUpperCase()] = dailyConsumption;
+                            }
+                        });
+
+                        for(const productCode in productConsumption){
+                            let consumptionNeeded = productConsumption[productCode];
+                            if(consumptionNeeded <= 0) continue;
+
+                            const addressesForProduct = Object.keys(simulatedInventory)
+                                .filter(addr => simulatedInventory[addr].item.toUpperCase() === productCode)
+                                .sort(); // Sort to consume from PP01 first
+                            
+                            for(const address of addressesForProduct) {
+                                if(consumptionNeeded <= 0) break;
+                                
+                                let currentQty = parseFloat(simulatedInventory[address].quantity);
+                                const consumedFromThis = Math.min(currentQty, consumptionNeeded);
+                                
+                                currentQty -= consumedFromThis;
+                                consumptionNeeded -= consumedFromThis;
+
+                                if(currentQty <= 0) {
+                                    delete simulatedInventory[address];
+                                } else {
+                                    const productParam = PRODUCT_PARAMS_DATA.find(p => p.code.toUpperCase() === productCode);
+                                    const maxQty = productParam ? parseFloat(productParam.maxQty) : 1;
+                                    simulatedInventory[address].quantity = currentQty;
+                                    simulatedInventory[address].percentage = maxQty > 0 ? (currentQty / maxQty) * 100 : 100;
+                                }
+                            }
+                        }
+                    }
+
+                    // Step 2: Allocate arrivals for this single day
+                    const arrivalsForThisDay = PROGRAMMING_DATA.filter(p => p.date === currentSimDayString);
+                    for (const arrival of arrivalsForThisDay) {
+                        let quantityToAllocate = parseFloat(arrival.quantity);
+                        if (isNaN(quantityToAllocate) || quantityToAllocate <= 0) continue;
+
+                        const productParam = PRODUCT_PARAMS_DATA.find(p => p.code.toUpperCase() === arrival.code.toUpperCase());
+                        const maxQty = productParam ? parseFloat(productParam.maxQty) : 1;
+                        if (maxQty <= 0) continue;
+
+                        const allLocations = [];
+                        for (let r = 1; r <= WAREHOUSE_CONFIG.totalRacks; r++) {
+                            const cols = WAREHOUSE_CONFIG.getColsForRack(r);
+                            const levelLettersReversed = [...WAREHOUSE_CONFIG.levelLetters].reverse();
+                            for (let c = 1; c <= cols; c++) {
+                                for (const level of levelLettersReversed) {
+                                    for (const s of WAREHOUSE_CONFIG.sides) {
+                                        allLocations.push(`PP${String(r).padStart(2, '0')}.${String(c).padStart(2, '0')}.${WAREHOUSE_CONFIG.levelMap[level]}.${s}`);
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Consolidation: First, try to fill partial pallets of the same product
+                        const partialPallets = allLocations
+                            .filter(addr => 
+                                simulatedInventory[addr] &&
+                                simulatedInventory[addr].item.toUpperCase() === arrival.code.toUpperCase() && 
+                                parseFloat(simulatedInventory[addr].quantity) < maxQty
+                            );
+                        
+                        for (const address of partialPallets) {
+                            if (quantityToAllocate <= 0) break;
+
+                            const pallet = simulatedInventory[address];
+                            const currentQty = parseFloat(pallet.quantity);
+                            const spaceAvailable = maxQty - currentQty;
+                            const qtyToAdd = Math.min(quantityToAllocate, spaceAvailable);
+
+                            pallet.quantity = currentQty + qtyToAdd;
+                            pallet.percentage = (pallet.quantity / maxQty) * 100;
+                            quantityToAllocate -= qtyToAdd;
+                        }
+
+                        // If there's still quantity left, fill empty slots
+                        if (quantityToAllocate > 0) {
+                            for(const address of allLocations){
+                                if(quantityToAllocate <= 0) break;
+                                if (!simulatedInventory[address]) {
+                                    const qtyForThisSlot = Math.min(quantityToAllocate, maxQty);
+                                    quantityToAllocate -= qtyForThisSlot;
+                                    simulatedInventory[address] = {
+                                        item: arrival.code,
+                                        quantity: qtyForThisSlot,
+                                        percentage: (qtyForThisSlot / maxQty) * 100
+                                    };
+                                }
+                            }
+                        }
+                    }
+                }
+
+                displayAllRacks(simulatedInventory, simulationDate);
+                updateGlobalStats(simulatedInventory);
+            }
+            
+            // --- INITIAL APP STARTUP ---
+            onAuthStateChanged(auth, async (user) => {
+                if (user) {
+                    userId = user.uid;
+                    await loadData(); // Load data from Firestore
+                    
+                    // Now that data is loaded, build the UI
+                    detailsPanel.textContent = 'Selecione uma posição para ver os detalhes';
+                    updateGlobalStats();
+                    createRackSelector();
+                    const firstRackLink = rackSelector.querySelector('a[data-rack="all"]');
+                    if (firstRackLink) {
+                        setActiveMenuItem(firstRackLink);
+                        displayAllRacks();
+                    } else {
+                         const fallbackLink = rackSelector.querySelector('a');
+                         if(fallbackLink) fallbackLink.click();
+                    }
+                } else {
+                    signInAnonymously(auth).catch((error) => {
+                        console.error("Erro na autenticação anônima:", error);
+                    });
+                }
+            });
+
         });
     </script>
 </body>
