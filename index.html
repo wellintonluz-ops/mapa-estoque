@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mapa de Estoque - Porta Pallets</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Custom scrollbar for better aesthetics */
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: #1f2937;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #4b5563;
+            border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: #6b7280;
+        }
+        /* Style for the grid cells */
+        .pallet-cell {
+            transition: all 0.2s ease-in-out;
+        }
+        .pallet-cell:hover {
+            background-color: #4b5563; /* gray-600 */
+            z-index: 10;
+        }
+        .pallet-cell.selected {
+            background-color: #fbbf24;
+            border-color: #f59e0b;
+            box-shadow: 0 0 15px rgba(251, 191, 36, 0.6);
+            transform: scale(1.05);
+            z-index: 20;
+        }
+        .pallet-cell.filled {
+            background-color: #2563eb; /* blue-600 */
+        }
+        .pallet-cell.filled:hover {
+            background-color: #1d4ed8; /* blue-700 */
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white">
+    <div class="flex flex-col h-screen">
+        <!-- Header -->
+        <header class="bg-gray-800 shadow-lg p-4 z-30">
+            <h1 class="text-2xl font-bold text-center text-amber-400">Mapa de Estoque Interativo</h1>
+            <div id="global-stats-panel" class="text-center text-gray-300 mt-2 text-sm"></div>
+            <p id="details-panel" class="text-center text-gray-300 mt-1 h-6">Selecione uma posição para ver os detalhes</p>
+        </header>
+
+        <!-- Main Content -->
+        <div class="flex flex-1 overflow-hidden">
+            <!-- Sidebar with Rack Selector -->
+            <nav class="w-48 bg-gray-800 p-4 overflow-y-auto custom-scrollbar">
+                <h2 class="text-lg font-semibold mb-4 text-center">Navegação</h2>
+                <ul id="rack-selector" class="space-y-2">
+                    <!-- Links will be generated here -->
+                </ul>
+            </nav>
+
+            <!-- Rack Display Area -->
+            <main id="main-content" class="flex-1 p-4 md:p-6 lg:p-8 overflow-auto custom-scrollbar">
+                <!-- Content will be generated here -->
+            </main>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const rackSelector = document.getElementById('rack-selector');
+            const mainContent = document.getElementById('main-content');
+            const detailsPanel = document.getElementById('details-panel');
+            const globalStatsPanel = document.getElementById('global-stats-panel');
+            
+            const STORAGE_KEYS = {
+                INVENTORY: 'warehouse_inventoryState_v3', // Changed key for new data format
+                INSTRUCTIONS: 'warehouse_instructionsData_v2',
+                PRODUCT_PARAMS: 'warehouse_productParams_v1'
+            };
+
+            const DEFAULT_INSTRUCTIONS = [
+                { title: 'Porta Pallets 01 ao 10', content: 'Aqui vai a instrução para os porta-pallets de 1 a 10. Ex: Armazenar produtos da Categoria A, alta rotatividade, eletrônicos.' },
+                { title: 'Porta Pallets 11 ao 26', content: 'Instrução para os porta-pallets de 11 a 26. Ex: Armazenar produtos da Categoria B, média rotatividade, eletrodomésticos.' },
+                { title: 'Regra Geral', content: 'Qualquer outra regra geral ou legenda pode ser adicionada aqui.' }
+            ];
+
+            let INSTRUCTIONS_DATA = [];
+            let inventoryState = {}; // Key: address, Value: {item: string, quantity: string, percentage: number}
+            let PRODUCT_PARAMS_DATA = [];
+            
+            const WAREHOUSE_CONFIG = {
+                totalRacks: 26,
+                levelLetters: ['F', 'E', 'D', 'C', 'B', 'A'],
+                levelMap: { 'F': '06', 'E': '05', 'D': '04', 'C': '03', 'B': '02', 'A': '01' },
+                sides: ['A', 'B'],
+                getColsForRack: (rackNumber) => {
+                    if (rackNumber >= 1 && rackNumber <= 10) return 21;
+                    if (rackNumber >= 11 && rackNumber <= 26) return 16;
+                    return 0;
+                }
+            };
+            
+            let selectedCell = null;
+
+            function updateGlobalStats() {
+                let grandTotalPositions = 0;
+                for (let i = 1; i <= WAREHOUSE_CONFIG.totalRacks; i++) {
+                    const cols = WAREHOUSE_CONFIG.getColsForRack(i);
+                    grandTotalPositions += cols * WAREHOUSE_CONFIG.levelLetters.length * WAREHOUSE_CONFIG.sides.length;
+                }
+
+                const totalOccupied = Object.keys(inventoryState).length;
+                const globalPercentage = grandTotalPositions > 0 ? ((totalOccupied / grandTotalPositions) * 100).toFixed(1) : 0;
+
+                globalStatsPanel.innerHTML = `
+                    <span class="font-semibold text-white">Total Posições: ${grandTotalPositions}</span> | 
+                    <span class="font-semibold text-red-400">Total Ocupado: ${totalOccupied}</span> | 
+                    <span class="font-bold text-amber-400">Ocupação Geral: ${globalPercentage}%</span>
+                `;
+            }
+
+            function saveData() {
+                localStorage.setItem(STORAGE_KEYS.INVENTORY, JSON.stringify(inventoryState));
+                localStorage.setItem(STORAGE_KEYS.INSTRUCTIONS, JSON.stringify(INSTRUCTIONS_DATA));
+                localStorage.setItem(STORAGE_KEYS.PRODUCT_PARAMS, JSON.stringify(PRODUCT_PARAMS_DATA));
+            }
+
+            function loadData() {
+                const savedInstructions = localStorage.getItem(STORAGE_KEYS.INSTRUCTIONS);
+                INSTRUCTIONS_DATA = savedInstructions ? JSON.parse(savedInstructions) : DEFAULT_INSTRUCTIONS;
+
+                const savedInventory = localStorage.getItem(STORAGE_KEYS.INVENTORY);
+                inventoryState = savedInventory ? JSON.parse(savedInventory) : {};
+
+                const savedParams = localStorage.getItem(STORAGE_KEYS.PRODUCT_PARAMS);
+                PRODUCT_PARAMS_DATA = savedParams ? JSON.parse(savedParams) : [];
+            }
+
+            function createRackSelector() {
+                rackSelector.innerHTML = '';
+                
+                const importListItem = document.createElement('li');
+                const importLink = document.createElement('a');
+                importLink.href = '#';
+                importLink.textContent = 'Importar Relatório';
+                importLink.dataset.rack = 'import';
+                importLink.className = 'block w-full text-center px-3 py-2 rounded-md text-sm font-medium bg-teal-600 text-white hover:bg-teal-500 transition-colors duration-150 mb-2';
+                importListItem.appendChild(importLink);
+                rackSelector.appendChild(importListItem);
+
+                const paramsListItem = document.createElement('li');
+                const paramsLink = document.createElement('a');
+                paramsLink.href = '#';
+                paramsLink.textContent = 'Parâmetros';
+                paramsLink.dataset.rack = 'params';
+                paramsLink.className = 'block w-full text-center px-3 py-2 rounded-md text-sm font-medium bg-purple-600 text-white hover:bg-purple-500 transition-colors duration-150 mb-2';
+                paramsListItem.appendChild(paramsLink);
+                rackSelector.appendChild(paramsListItem);
+
+                const instrListItem = document.createElement('li');
+                const instrLink = document.createElement('a');
+                instrLink.href = '#';
+                instrLink.textContent = 'Instruções';
+                instrLink.dataset.rack = 'instructions';
+                instrLink.className = 'block w-full text-center px-3 py-2 rounded-md text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-500 transition-colors duration-150 mb-2';
+                instrListItem.appendChild(instrLink);
+                rackSelector.appendChild(instrListItem);
+                
+                const allListItem = document.createElement('li');
+                const allLink = document.createElement('a');
+                allLink.href = '#';
+                allLink.textContent = 'Visualizar Todos';
+                allLink.dataset.rack = 'all';
+                allLink.className = 'block w-full text-center px-3 py-2 rounded-md text-sm font-medium bg-amber-600 text-white hover:bg-amber-500 transition-colors duration-150 mb-4';
+                allListItem.appendChild(allLink);
+                rackSelector.appendChild(allListItem);
+
+                const separator = document.createElement('hr');
+                separator.className = "border-gray-600 my-4";
+                rackSelector.appendChild(separator);
+                
+                const rackTitle = document.createElement('h3');
+                rackTitle.textContent = "Porta Pallets";
+                rackTitle.className = "text-center text-gray-400 text-sm font-bold uppercase mb-2";
+                rackSelector.appendChild(rackTitle);
+
+                for (let i = 1; i <= WAREHOUSE_CONFIG.totalRacks; i++) {
+                    const listItem = document.createElement('li');
+                    const link = document.createElement('a');
+                    link.href = '#';
+                    link.textContent = `Porta Pallet ${String(i).padStart(2, '0')}`;
+                    link.dataset.rack = i;
+                    link.className = 'block w-full text-center px-3 py-2 rounded-md text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-white transition-colors duration-150';
+                    listItem.appendChild(link);
+                    rackSelector.appendChild(listItem);
+                }
+            }
+            
+            function createRackGridElement(rackNumber) {
+                const cols = WAREHOUSE_CONFIG.getColsForRack(rackNumber);
+                const grid = document.createElement('div');
+                grid.className = 'grid gap-1.5';
+                grid.style.gridTemplateColumns = `repeat(${cols}, 80px)`;
+
+                WAREHOUSE_CONFIG.levelLetters.forEach(levelLetter => {
+                    for (let col = 1; col <= cols; col++) {
+                        const positionContainer = document.createElement('div');
+                        positionContainer.className = 'flex aspect-square rounded-sm overflow-hidden';
+                        const levelNum = WAREHOUSE_CONFIG.levelMap[levelLetter];
+
+                        WAREHOUSE_CONFIG.sides.forEach((side, index) => {
+                            const cell = document.createElement('div');
+                            const address = `PP${String(rackNumber).padStart(2, '0')}.${String(col).padStart(2, '0')}.${levelNum}.${side}`;
+                            cell.dataset.address = address;
+
+                            let cellClasses = 'pallet-cell flex-1 h-full bg-gray-700 cursor-pointer border-2 border-transparent flex items-center justify-center';
+                            
+                            // Adiciona uma borda à direita da célula 'A' para criar uma divisão visual robusta
+                            if (index === 0) {
+                                cellClasses += ' border-r-2 border-gray-900'; 
+                            }
+                            cell.className = cellClasses;
+
+                            cell.title = address;
+
+                            const data = inventoryState[address];
+                            if (data) {
+                                cell.classList.add('filled');
+                                if (data.percentage !== undefined && !isNaN(data.percentage)) {
+                                    cell.innerHTML = `<span class="text-xs font-bold pointer-events-none">${Math.round(data.percentage)}%</span>`;
+                                }
+                            }
+
+                            cell.addEventListener('click', () => handleCellClick(cell));
+                            cell.addEventListener('dblclick', () => handleCellToggle(cell, rackNumber));
+                            positionContainer.appendChild(cell);
+                        });
+                        grid.appendChild(positionContainer);
+                    }
+                });
+                return grid;
+            }
+            
+            function updateRackStats(rackNumber) {
+                const statsContainer = document.getElementById(`stats-rack-${rackNumber}`);
+                if (!statsContainer) return;
+
+                const cols = WAREHOUSE_CONFIG.getColsForRack(rackNumber);
+                const totalPositions = cols * WAREHOUSE_CONFIG.levelLetters.length * WAREHOUSE_CONFIG.sides.length;
+                
+                let filledCount = 0;
+                const rackPrefix = `PP${String(rackNumber).padStart(2, '0')}`;
+                Object.keys(inventoryState).forEach(address => {
+                    if (address.startsWith(rackPrefix)) {
+                        filledCount++;
+                    }
+                });
+
+                const emptyCount = totalPositions - filledCount;
+                const percentage = totalPositions > 0 ? ((filledCount / totalPositions) * 100).toFixed(1) : 0;
+
+                statsContainer.innerHTML = `
+                    <span class="text-sm font-normal text-gray-400">
+                        ${cols} Colunas | Posições: 
+                        <span class="font-semibold text-white">${totalPositions}</span> Total | 
+                        <span class="font-semibold text-green-400">${emptyCount}</span> Vazias | 
+                        <span class="font-semibold text-red-400">${filledCount}</span> Preenchidas |
+                        <span class="font-bold text-amber-400">${percentage}% Ocupado</span>
+                    </span>
+                `;
+            }
+
+            function displaySingleRack(rackNumber) {
+                mainContent.innerHTML = '';
+                const container = document.createElement('div');
+                const titleContainer = document.createElement('div');
+                titleContainer.className = 'text-center mb-4';
+                const title = document.createElement('h3');
+                title.className = 'text-2xl font-bold';
+                title.textContent = `Porta Pallet ${String(rackNumber).padStart(2, '0')}`;
+                const stats = document.createElement('div');
+                stats.id = `stats-rack-${rackNumber}`;
+                titleContainer.appendChild(title);
+                titleContainer.appendChild(stats);
+                const grid = createRackGridElement(rackNumber);
+                container.appendChild(titleContainer);
+                container.appendChild(grid);
+                mainContent.appendChild(container);
+                updateRackStats(rackNumber);
+                resetSelection();
+            }
+
+            function displayAllRacks() {
+                mainContent.innerHTML = '';
+                for (let i = 1; i <= WAREHOUSE_CONFIG.totalRacks; i++) {
+                    const rackContainer = document.createElement('div');
+                    rackContainer.className = 'mb-12';
+                    const title = document.createElement('h3');
+                    title.className = 'text-xl font-semibold text-amber-400';
+                    title.textContent = `Porta Pallet ${String(i).padStart(2, '0')}`;
+                    const stats = document.createElement('div');
+                    stats.id = `stats-rack-${i}`;
+                    stats.className = 'mb-3';
+                    const grid = createRackGridElement(i);
+                    rackContainer.appendChild(title);
+                    rackContainer.appendChild(stats);
+                    rackContainer.appendChild(grid);
+                    mainContent.appendChild(rackContainer);
+                    updateRackStats(i);
+                }
+                resetSelection();
+            }
+
+            function displayInstructions() {
+                mainContent.innerHTML = '';
+                
+                const header = document.createElement('div');
+                header.className = 'flex justify-between items-center mb-6';
+                
+                const title = document.createElement('h2');
+                title.className = 'text-2xl font-bold text-amber-400';
+                title.textContent = 'Instruções de Armazenagem';
+                header.appendChild(title);
+
+                const addButton = document.createElement('button');
+                addButton.textContent = 'Adicionar Nova Instrução';
+                addButton.className = 'px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-md font-semibold transition-colors duration-150';
+                addButton.onclick = () => {
+                    INSTRUCTIONS_DATA.push({ title: 'Nova Instrução', content: '' });
+                    displayInstructions();
+                };
+                header.appendChild(addButton);
+                mainContent.appendChild(header);
+
+                const container = document.createElement('div');
+                container.id = 'instructions-container';
+                container.className = 'space-y-6';
+
+                INSTRUCTIONS_DATA.forEach((item, index) => {
+                    const instructionBlock = document.createElement('div');
+                    instructionBlock.className = 'instruction-block bg-gray-800 p-4 rounded-lg shadow';
+                    
+                    const blockHeader = document.createElement('div');
+                    blockHeader.className = 'flex justify-between items-center mb-2';
+
+                    const titleInput = document.createElement('input');
+                    titleInput.type = 'text';
+                    titleInput.value = item.title;
+                    titleInput.className = 'text-lg font-semibold text-white bg-transparent border-b-2 border-gray-700 focus:border-amber-500 outline-none w-full mr-4 transition';
+                    blockHeader.appendChild(titleInput);
+                    
+                    const deleteButton = document.createElement('button');
+                    deleteButton.textContent = 'Remover';
+                    deleteButton.className = 'px-3 py-1 bg-red-700 hover:bg-red-600 rounded-md text-sm font-medium transition-colors duration-150';
+                    deleteButton.onclick = () => {
+                        INSTRUCTIONS_DATA.splice(index, 1);
+                        displayInstructions();
+                    };
+                    blockHeader.appendChild(deleteButton);
+
+                    const contentTextarea = document.createElement('textarea');
+                    contentTextarea.className = 'w-full h-24 bg-gray-700 text-gray-300 p-2 rounded-md border border-gray-600 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition';
+                    contentTextarea.value = item.content;
+
+                    instructionBlock.appendChild(blockHeader);
+                    instructionBlock.appendChild(contentTextarea);
+                    container.appendChild(instructionBlock);
+                });
+
+                const saveButton = document.createElement('button');
+                saveButton.textContent = 'Salvar Alterações';
+                saveButton.className = 'mt-6 px-4 py-2 bg-green-600 hover:bg-green-500 rounded-md font-semibold transition-colors duration-150';
+                saveButton.onclick = () => {
+                    const newInstructionData = [];
+                    document.querySelectorAll('.instruction-block').forEach(block => {
+                        const title = block.querySelector('input').value;
+                        const content = block.querySelector('textarea').value;
+                        if (title.trim() || content.trim()) {
+                            newInstructionData.push({ title, content });
+                        }
+                    });
+                    INSTRUCTIONS_DATA = newInstructionData;
+                    saveData();
+                    saveButton.textContent = 'Salvo!';
+                    setTimeout(() => { saveButton.textContent = 'Salvar Alterações'; }, 2000);
+                };
+
+                mainContent.appendChild(container);
+                if (INSTRUCTIONS_DATA.length > 0) {
+                    mainContent.appendChild(saveButton);
+                }
+            }
+
+            function displayImportScreen() {
+                mainContent.innerHTML = `
+                    <div class="max-w-2xl mx-auto">
+                        <h2 class="text-2xl font-bold mb-4 text-amber-400">Importar Relatório de Estoque</h2>
+                        <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                            <p class="text-gray-300 mb-4">Cole o conteúdo do seu relatório na área abaixo ou carregue um arquivo (.txt, .csv).</p>
+                            <p class="text-sm text-gray-400 mb-4">O formato esperado é: <code class="bg-gray-900 px-2 py-1 rounded">POSIÇÃO,Itens,Quantidade</code> por linha. O separador pode ser vírgula, ponto e vírgula ou tabulação.</p>
+                            
+                            <textarea id="import-textarea" class="w-full h-48 bg-gray-700 text-gray-300 p-3 rounded-md border border-gray-600 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition" placeholder="Ex: PP01.01.01.A,Produto Exemplo,100&#10;PP01.01.01.B,Produto Y,50&#10;PP01.01.02.A,Produto Z,200&#10;PP01.01.02.B,; (Para esvaziar esta posição)"></textarea>
+
+                            <div class="mt-4 flex items-center justify-between">
+                                <label for="file-upload" class="cursor-pointer px-4 py-2 bg-gray-600 hover:bg-gray-500 rounded-md font-semibold transition-colors duration-150">
+                                    Carregar Arquivo
+                                </label>
+                                <input id="file-upload" type="file" class="hidden" accept=".csv,.txt">
+                                <button id="import-button" class="px-6 py-2 bg-green-600 hover:bg-green-500 rounded-md font-semibold transition-colors duration-150">Importar Dados</button>
+                            </div>
+                             <p id="import-status" class="text-center mt-4 h-6"></p>
+                        </div>
+                    </div>
+                `;
+
+                const fileUpload = document.getElementById('file-upload');
+                const textarea = document.getElementById('import-textarea');
+                
+                fileUpload.addEventListener('change', (event) => {
+                    const file = event.target.files[0];
+                    if (file) {
+                        const reader = new FileReader();
+                        reader.onload = (e) => {
+                            textarea.value = e.target.result;
+                        };
+                        reader.readAsText(file);
+                    }
+                });
+
+                document.getElementById('import-button').addEventListener('click', () => {
+                    const data = textarea.value;
+                    if (!data.trim()) {
+                        document.getElementById('import-status').textContent = 'Nenhum dado para importar.';
+                        return;
+                    }
+
+                    const lines = data.split(/\r?\n/);
+                    let updatedCount = 0;
+                    let errorCount = 0;
+                    const positionRegex = /^PP\d{2}\.\d{2}\.\d{2}\.[AB]$/i;
+
+                    lines.forEach(line => {
+                        if (!line.trim()) return;
+                        if (line.toLowerCase().includes('posição')) return;
+
+                        const parts = line.split(/[,;\t]/);
+                        if (parts.length >= 3) {
+                            const position = parts[0].trim().toUpperCase();
+                            const item = parts[1].trim();
+                            const quantity = parts[2].trim();
+
+                            if (positionRegex.test(position)) {
+                                if (item === '' && quantity === '') {
+                                    delete inventoryState[position];
+                                } else {
+                                    const productParam = PRODUCT_PARAMS_DATA.find(p => p.code.toUpperCase() === item.toUpperCase());
+                                    const maxQty = productParam ? parseFloat(productParam.maxQty) : 0;
+                                    let percentage = 100; // Default to 100% if no param is found
+                                    if(maxQty > 0) {
+                                        percentage = (parseFloat(quantity) / maxQty) * 100;
+                                    }
+                                    inventoryState[position] = { item, quantity, percentage };
+                                }
+                                updatedCount++;
+                            } else {
+                                errorCount++;
+                            }
+                        } else if (line.trim()) {
+                             errorCount++;
+                        }
+                    });
+
+                    saveData();
+                    updateGlobalStats();
+                    const statusEl = document.getElementById('import-status');
+                    statusEl.textContent = `Importação concluída! ${updatedCount} posições atualizadas. ${errorCount} linhas com erro. Atualizando o mapa...`;
+                    statusEl.classList.add('text-green-400');
+                    
+                    setTimeout(() => {
+                        displayAllRacks();
+                        
+                        document.querySelectorAll('#rack-selector a').forEach(a => {
+                            a.classList.remove('bg-gray-900', 'text-amber-400', 'bg-teal-500', 'bg-purple-500', 'bg-indigo-500', 'bg-amber-500');
+                        });
+                        const allLink = document.querySelector('a[data-rack="all"]');
+                        if (allLink) {
+                            allLink.classList.add('bg-amber-500');
+                        }
+                    }, 2500);
+                });
+            }
+            
+            function displayProductParamsScreen(showConfirmation = false) {
+                mainContent.innerHTML = '';
+                
+                const header = document.createElement('div');
+                header.className = 'flex justify-between items-center mb-6';
+                
+                const title = document.createElement('h2');
+                title.className = 'text-2xl font-bold text-amber-400';
+                title.textContent = 'Cadastro de Produtos';
+                header.appendChild(title);
+
+                if (showConfirmation) {
+                    const confirmation = document.createElement('span');
+                    confirmation.className = 'ml-4 text-lg font-normal text-green-400';
+                    confirmation.textContent = 'Salvo com sucesso!';
+                    title.appendChild(confirmation);
+                    setTimeout(() => {
+                        confirmation.remove();
+                    }, 2500);
+                }
+
+                const addButton = document.createElement('button');
+                addButton.textContent = 'Adicionar Novo Produto';
+                addButton.className = 'px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-md font-semibold transition-colors duration-150';
+                header.appendChild(addButton);
+                mainContent.appendChild(header);
+
+                const container = document.createElement('div');
+                container.id = 'params-container';
+                container.className = 'space-y-4';
+
+                const tableHeader = document.createElement('div');
+                tableHeader.className = 'grid grid-cols-12 gap-4 px-4 text-sm font-bold text-gray-400 uppercase';
+                tableHeader.innerHTML = `
+                    <div class="col-span-5">Código do Produto</div>
+                    <div class="col-span-3 text-center">Qtd. Máxima na Locação</div>
+                    <div class="col-span-3 text-center">Média de Saída</div>
+                    <div class="col-span-1"></div>
+                `;
+                container.appendChild(tableHeader);
+
+                const createParamBlock = (item, parent) => {
+                    const paramBlock = document.createElement('div');
+                    paramBlock.className = 'param-block bg-gray-800 p-3 rounded-lg grid grid-cols-12 gap-4 items-center';
+                    
+                    paramBlock.innerHTML = `
+                        <input type="text" value="${item.code || ''}" placeholder="Ex: PROD-001" class="param-code col-span-5 bg-gray-700 text-white p-2 rounded-md border border-gray-600 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition">
+                        <input type="number" value="${item.maxQty || ''}" placeholder="Ex: 100" class="param-max-qty col-span-3 bg-gray-700 text-white p-2 rounded-md border border-gray-600 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition text-center">
+                        <input type="text" value="${item.avgOutflow || ''}" placeholder="Ex: 10/dia" class="param-avg-outflow col-span-3 bg-gray-700 text-white p-2 rounded-md border border-gray-600 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition text-center">
+                        <button class="remove-btn col-span-1 px-3 py-2 bg-red-700 hover:bg-red-600 rounded-md text-sm font-medium transition-colors duration-150">Remover</button>
+                    `;
+                    
+                    paramBlock.querySelector('.remove-btn').onclick = () => paramBlock.remove();
+                    parent.appendChild(paramBlock);
+                };
+                
+                addButton.onclick = () => {
+                    createParamBlock({}, container);
+                };
+
+                PRODUCT_PARAMS_DATA.forEach(item => createParamBlock(item, container));
+
+                const saveButton = document.createElement('button');
+                saveButton.textContent = 'Salvar Alterações';
+                saveButton.className = 'mt-6 px-4 py-2 bg-green-600 hover:bg-green-500 rounded-md font-semibold transition-colors duration-150';
+                saveButton.onclick = () => {
+                    const newParamsData = [];
+                    const paramBlocks = mainContent.querySelectorAll('#params-container .param-block');
+                    
+                    paramBlocks.forEach(block => {
+                        const code = block.querySelector('.param-code').value.trim();
+                        const maxQty = block.querySelector('.param-max-qty').value.trim();
+                        const avgOutflow = block.querySelector('.param-avg-outflow').value.trim();
+                        if (code || maxQty || avgOutflow) {
+                            newParamsData.push({ code, maxQty, avgOutflow });
+                        }
+                    });
+                    
+                    PRODUCT_PARAMS_DATA = newParamsData;
+                    saveData();
+                    
+                    displayProductParamsScreen(true);
+                };
+                
+                mainContent.appendChild(container);
+                mainContent.appendChild(saveButton);
+            }
+
+            function handleCellToggle(cell, rackNumber) {
+                const address = cell.dataset.address;
+                if (inventoryState[address]) {
+                    delete inventoryState[address];
+                    cell.classList.remove('filled');
+                    cell.innerHTML = '';
+                } else {
+                    inventoryState[address] = { item: 'Ocupado Manualmente', quantity: '-' };
+                    cell.classList.add('filled');
+                }
+                saveData();
+                updateRackStats(rackNumber);
+                updateGlobalStats();
+                handleCellClick(cell);
+            }
+
+            function handleCellClick(cell) {
+                if (selectedCell) {
+                    selectedCell.classList.remove('selected');
+                }
+                if (selectedCell === cell) {
+                    resetSelection();
+                    return;
+                }
+                cell.classList.add('selected');
+                selectedCell = cell;
+                const address = cell.dataset.address;
+                const data = inventoryState[address];
+
+                if (data) {
+                    let detailsHTML = `
+                        <span class="font-bold text-amber-300">${address}</span> | 
+                        <span class="text-white">Item: ${data.item}</span> | 
+                        <span class="text-white">Qtd: ${data.quantity}</span>
+                    `;
+                    if (data.percentage !== undefined && !isNaN(data.percentage)) {
+                        detailsHTML += ` | <span class="text-white">Ocupação: <span class="font-semibold">${data.percentage.toFixed(1)}%</span></span>`;
+                    }
+                    detailsPanel.innerHTML = detailsHTML;
+                } else {
+                    detailsPanel.innerHTML = `Posição Selecionada: <span class="font-bold text-amber-300">${address}</span>`;
+                }
+            }
+
+            function resetSelection() {
+                detailsPanel.textContent = 'Selecione uma posição para ver os detalhes';
+                if (selectedCell) {
+                    selectedCell.classList.remove('selected');
+                    selectedCell = null;
+                }
+            }
+
+            rackSelector.addEventListener('click', (event) => {
+                const target = event.target.closest('a');
+                if (target) {
+                    event.preventDefault();
+                    const rackId = target.dataset.rack;
+
+                    document.querySelectorAll('#rack-selector a').forEach(a => a.classList.remove('bg-gray-900', 'text-amber-400'));
+                    target.classList.add('bg-gray-900', 'text-amber-400');
+                    
+                    if (['import', 'instructions', 'all', 'params'].includes(rackId)) {
+                        target.classList.remove('bg-gray-900', 'text-amber-400');
+                        if(rackId === 'import') target.classList.add('bg-teal-500');
+                        if(rackId === 'instructions') target.classList.add('bg-indigo-500');
+                        if(rackId === 'all') target.classList.add('bg-amber-500');
+                        if(rackId === 'params') target.classList.add('bg-purple-500');
+                    }
+
+                    switch(rackId) {
+                        case 'import': displayImportScreen(); break;
+                        case 'instructions': displayInstructions(); break;
+                        case 'params': displayProductParamsScreen(); break;
+                        case 'all': displayAllRacks(); break;
+                        default: displaySingleRack(parseInt(rackId, 10)); break;
+                    }
+                }
+            });
+
+            // Initial setup
+            loadData();
+            updateGlobalStats();
+            createRackSelector();
+            const firstRackLink = rackSelector.querySelector('a[data-rack="1"]');
+            if (firstRackLink) {
+                 firstRackLink.classList.add('bg-gray-900', 'text-amber-400');
+                 displaySingleRack(1);
+            } else {
+                 displayInstructions();
+            }
+        });
+    </script>
+</body>
+</html>
+
