@@ -336,10 +336,16 @@
 
                             const data = sourceInventory[address];
                             if (data) {
-                                cell.classList.add('filled');
                                 cell.title = `${address}\nProduto: ${data.item}\nQtd: ${data.quantity}`;
                                 if (data.percentage !== undefined && !isNaN(data.percentage)) {
+                                    if (data.percentage < 99.9) {
+                                        cell.classList.add('partial-fill');
+                                    } else {
+                                        cell.classList.add('filled');
+                                    }
                                     cell.innerHTML = `<span class="text-xs font-bold pointer-events-none">${Math.round(data.percentage)}%</span>`;
+                                } else {
+                                    cell.classList.add('filled');
                                 }
                             } else {
                                 cell.title = address;
@@ -604,7 +610,7 @@
                         const parts = line.split(/[,;\t]/);
                         if (parts.length >= 3) {
                             const position = parts[0].trim().toUpperCase();
-                            const item = parts[1].trim();
+                            const item = parts[1].trim().toUpperCase();
                             const quantity = parts[2].trim();
 
                             if (positionRegex.test(position)) {
@@ -734,7 +740,7 @@
                 saveButton.onclick = () => {
                     const newParamsData = [];
                     mainContent.querySelectorAll('#params-container .param-block').forEach(block => {
-                        const code = block.querySelector('.param-code').value.trim();
+                        const code = block.querySelector('.param-code').value.trim().toUpperCase();
                         const maxQty = block.querySelector('.param-max-qty').value.trim();
                         if (code || maxQty) {
                             newParamsData.push({ code, maxQty });
@@ -900,9 +906,8 @@
                             if (row.length >= 3) {
                                 let date = row[0];
                                  if (typeof date === 'number') {
-                                    const excelEpoch = new Date(1899, 11, 30);
-                                    const jsDate = new Date(excelEpoch.getTime() + date * 86400000);
-                                    date = jsDate.toISOString().split('T')[0];
+                                    const jsDate = XLSX.SSF.parse_date_code(date);
+                                    date = `${jsDate.y}-${String(jsDate.m).padStart(2,'0')}-${String(jsDate.d).padStart(2,'0')}`;
                                 } else if (typeof date === 'string' && date.includes('/')) {
                                     const [day, month, year] = date.split('/');
                                     date = `${year.length === 2 ? '20' + year : year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
@@ -921,7 +926,7 @@
                     const newData = [];
                     mainContent.querySelectorAll('.programming-block').forEach(block => {
                         const date = block.querySelector('.programming-date').value;
-                        const code = block.querySelector('.programming-code').value.trim();
+                        const code = block.querySelector('.programming-code').value.trim().toUpperCase();
                         const quantity = block.querySelector('.programming-quantity').value.trim();
                         if (date && code && quantity) {
                             newData.push({ date, code, quantity });
@@ -1096,11 +1101,11 @@
                             const newForecast = {};
                             const header = data[0];
                             const dates = header.slice(1).map(dateCell => {
-                                if (typeof dateCell === 'number') {
+                                let dateStr = String(dateCell).trim();
+                                if (typeof dateCell === 'number') { // Excel date number
                                     const jsDate = XLSX.SSF.parse_date_code(dateCell);
                                     return `${jsDate.y}-${String(jsDate.m).padStart(2, '0')}-${String(jsDate.d).padStart(2, '0')}`;
                                 }
-                                let dateStr = String(dateCell).trim();
                                 if (dateStr.includes('/')) {
                                     const parts = dateStr.split('/');
                                     if(parts.length === 3) {
@@ -1109,7 +1114,7 @@
                                         return `${fullYear}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
                                     }
                                 }
-                                return dateStr;
+                                return dateStr; // Assume YYYY-MM-DD
                             });
                             
                             for (let i = 1; i < data.length; i++) {
