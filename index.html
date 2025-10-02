@@ -349,14 +349,12 @@
                             if (data) {
                                 cell.title = `${address}\nProduto: ${data.item}\nQtd: ${data.quantity}`;
                                 if (data.percentage !== undefined && !isNaN(data.percentage)) {
-                                    if (data.percentage < 99.9) {
+                                     if (data.percentage > 100) {
+                                        cell.classList.add('over-capacity');
+                                    } else if (data.percentage < 99.9) {
                                         cell.classList.add('partial-fill');
                                     } else {
                                         cell.classList.add('filled');
-                                    }
-                                     if(data.percentage > 100) {
-                                        cell.classList.remove('filled', 'partial-fill');
-                                        cell.classList.add('over-capacity');
                                     }
                                     cell.innerHTML = `<span class="text-xs font-bold pointer-events-none">${Math.round(data.percentage)}%</span>`;
                                 } else {
@@ -429,7 +427,7 @@
                 resetSelection();
             }
 
-            function displayAllRacks(sourceInventory = inventoryState, simulationDate = null) {
+            function displayAllRacks(sourceInventory = inventoryState) {
                 mainContent.innerHTML = '';
                 
                 for (let i = 1; i <= WAREHOUSE_CONFIG.totalRacks; i++) {
@@ -725,8 +723,23 @@
                     });
                     
                     PRODUCT_PARAMS_DATA = newParamsData;
+
+                    Object.keys(inventoryState).forEach(address => {
+                        const stockItem = inventoryState[address];
+                        if (stockItem && stockItem.item !== 'OCUPADO MANUALMENTE') {
+                            const productParam = newParamsData.find(p => p.code.toUpperCase() === stockItem.item.toUpperCase());
+                            if (productParam) {
+                                const maxQty = parseFloat(productParam.maxQty);
+                                if (maxQty > 0) {
+                                    stockItem.percentage = (parseFloat(stockItem.quantity) / maxQty) * 100;
+                                } else {
+                                    stockItem.percentage = 100; 
+                                }
+                            }
+                        }
+                    });
+
                     saveData();
-                    
                     displayProductParamsScreen(true);
                 };
                 
@@ -946,6 +959,155 @@
                 }
             }
             
+            function displayForecastScreen(showConfirmation = false, confirmationMessage = 'Salvo com sucesso!') {
+                mainContent.innerHTML = `
+                    <div class="max-w-4xl mx-auto">
+                        <div class="flex justify-between items-center mb-6">
+                            <h2 class="text-2xl font-bold text-amber-400">Cadastro de Forecast de Saídas</h2>
+                            <div class="flex items-center gap-4">
+                                <label for="forecast-file-upload" class="cursor-pointer px-4 py-2 bg-green-600 hover:bg-green-500 rounded-md font-semibold transition-colors duration-150">
+                                    Carregar Novo Forecast
+                                </label>
+                                <input id="forecast-file-upload" type="file" class="hidden" accept=".csv,.txt,.xls,.xlsx">
+                            </div>
+                        </div>
+                        <p id="forecast-status" class="text-center mb-4 h-6 text-green-400"></p>
+                        <div id="forecast-table-container" class="overflow-x-auto"></div>
+                        <button id="save-forecast-changes" class="mt-6 px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-md font-semibold transition-colors duration-150">Salvar Alterações</button>
+                    </div>`;
+
+                const fileInput = document.getElementById('forecast-file-upload');
+                const statusEl = document.getElementById('forecast-status');
+                const tableContainer = document.getElementById('forecast-table-container');
+                const saveButton = document.getElementById('save-forecast-changes');
+                
+                if(showConfirmation){
+                    statusEl.textContent = confirmationMessage;
+                    setTimeout(() => { statusEl.textContent = ''; }, 3000);
+                }
+
+                renderForecastTable(FORECAST_DATA, tableContainer);
+
+                fileInput.addEventListener('change', (event) => {
+                    const file = event.target.files[0];
+                    if (!file) return;
+                    
+                    statusEl.textContent = 'Processando arquivo...';
+                    processUploadedFile(file, (data) => {
+                         try {
+                            if (data.length < 2) throw new Error("Arquivo inválido ou vazio.");
+
+                            const newForecast = {};
+                            const header = data[0];
+                            const dates = header.slice(1).map(dateCell => {
+                                let dateStr = String(dateCell).trim();
+                                if (typeof dateCell === 'number') { // Excel date number
+                                    const jsDate = XLSX.SSF.parse_date_code(dateCell);
+                                    return `${jsDate.y}-${String(jsDate.m).padStart(2, '0')}-${String(jsDate.d).padStart(2, '0')}`;
+                                }
+                                if (dateStr.includes('/')) {
+                                    const parts = dateStr.split('/');
+                                    if(parts.length === 3) {
+                                        const [day, month, year] = parts.map(p => p.trim());
+                                        const fullYear = year.length === 2 ? '20' + year : year;
+                                        return `${fullYear}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                                    }
+                                }
+                                return dateStr; // Assume YYYY-MM-DD
+                            });
+                            
+                            for (let i = 1; i < data.length; i++) {
+                                const row = data[i];
+                                const productCode = String(row[0]).trim().toUpperCase();
+                                if (!productCode) continue;
+
+                                for (let j = 1; j < row.length; j++) {
+                                    const date = dates[j - 1];
+                                    const quantity = parseFloat(row[j]);
+
+                                    if (date && !isNaN(quantity) && quantity > 0) {
+                                        if (!newForecast[date]) newForecast[date] = {};
+                                        newForecast[date][productCode] = quantity;
+                                    }
+                                }
+                            }
+                            
+                            FORECAST_DATA = newForecast; 
+                            nextRenderMessage = `Arquivo carregado! ${Object.keys(newForecast).length} dias, ${data.length - 1} produtos. Clique em 'Salvar'.`;
+                            refreshCurrentView();
+
+                        } catch (error) {
+                            console.error("Erro ao processar o arquivo de forecast:", error);
+                            nextRenderMessage = 'Erro ao processar. Verifique o formato do arquivo.';
+                            refreshCurrentView();
+                        } finally {
+                            fileInput.value = '';
+                        }
+                    });
+                });
+
+                saveButton.onclick = () => {
+                    const newForecast = {};
+                    mainContent.querySelectorAll('.forecast-row').forEach(row => {
+                        const productCode = row.querySelector('.forecast-code').textContent.trim();
+                        row.querySelectorAll('.forecast-qty').forEach(input => {
+                            const date = input.dataset.date;
+                            const quantity = parseFloat(input.value);
+                            if (date && productCode && !isNaN(quantity) && quantity > 0) {
+                                if(!newForecast[date]) newForecast[date] = {};
+                                newForecast[date][productCode] = quantity;
+                            }
+                        });
+                    });
+                    
+                    FORECAST_DATA = newForecast;
+                    saveData();
+                    nextRenderMessage = 'Alterações salvas com sucesso!';
+                    refreshCurrentView();
+                };
+            }
+
+            function renderForecastTable(forecastData, container) {
+                const productForecasts = {};
+                const allDates = new Set();
+                for(const date in forecastData){
+                    allDates.add(date);
+                    for(const productCode in forecastData[date]){
+                        if(!productForecasts[productCode]){
+                            productForecasts[productCode] = {};
+                        }
+                        productForecasts[productCode][date] = forecastData[date][productCode];
+                    }
+                }
+                const sortedDates = Array.from(allDates).sort();
+
+                let tableHTML = '<table class="w-full text-left">';
+                tableHTML += '<thead class="bg-gray-800"><tr><th class="p-2 sticky left-0 bg-gray-800">Produto</th>';
+                sortedDates.forEach(date => {
+                    const dateObj = new Date(date + 'T00:00:00');
+                    const formattedDate = isNaN(dateObj) ? 'Data Inválida' : dateObj.toLocaleDateString('pt-BR');
+                    tableHTML += `<th class="p-2 text-center">${formattedDate}</th>`;
+                });
+                tableHTML += '<th></th></tr></thead>';
+                
+                tableHTML += '<tbody>';
+                Object.keys(productForecasts).sort().forEach(productCode => {
+                    tableHTML += `<tr class="forecast-row border-b border-gray-700">`;
+                    tableHTML += `<td class="p-2 font-semibold forecast-code sticky left-0 bg-gray-900">${productCode}</td>`;
+                    sortedDates.forEach(date => {
+                        const qty = productForecasts[productCode][date] || 0;
+                        tableHTML += `<td class="p-1"><input type="number" class="w-24 bg-gray-700 text-center rounded p-1 forecast-qty" data-date="${date}" value="${qty}"></td>`;
+                    });
+                    tableHTML += `<td><button class="remove-btn px-2 py-1 bg-red-700 hover:bg-red-600 rounded text-xs">X</button></td>`;
+                    tableHTML += `</tr>`;
+                });
+                tableHTML += '</tbody></table>';
+
+                container.innerHTML = tableHTML;
+                container.querySelectorAll('.remove-btn').forEach(btn => {
+                    btn.onclick = (e) => e.target.closest('.forecast-row').remove();
+                });
+            }
             
             // --- INITIAL APP STARTUP ---
             async function initialize() {
