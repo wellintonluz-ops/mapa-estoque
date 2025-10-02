@@ -55,6 +55,12 @@
         .pallet-cell.partial-fill:hover {
             background-color: #dc2626; /* red-600 */
         }
+        .pallet-cell.over-capacity {
+            background-color: #f97316; /* orange-500 */
+        }
+        .pallet-cell.over-capacity:hover {
+            background-color: #ea580c; /* orange-600 */
+        }
         .menu-text {
             transition: opacity 0.2s ease-in-out, width 0.2s ease-in-out;
         }
@@ -170,12 +176,17 @@
                 }
 
                 const totalOccupied = Object.keys(sourceInventory).length;
+                const totalItems = Object.values(sourceInventory).reduce((sum, item) => {
+                    const quantity = parseFloat(item.quantity);
+                    return sum + (isNaN(quantity) ? 0 : quantity);
+                }, 0);
                 const globalPercentage = grandTotalPositions > 0 ? ((totalOccupied / grandTotalPositions) * 100).toFixed(1) : 0;
 
                 globalStatsPanel.innerHTML = `
-                    <span class="font-semibold text-white">Total Posições: ${grandTotalPositions}</span> | 
-                    <span class="font-semibold text-red-400">Total Ocupado: ${totalOccupied}</span> | 
-                    <span class="font-bold text-amber-400">Ocupação Geral: ${globalPercentage}%</span>
+                    <span class="font-semibold text-white">Total de Posições: ${grandTotalPositions.toLocaleString('pt-BR')}</span> | 
+                    <span class="font-semibold text-red-400">Posições Ocupadas: ${totalOccupied.toLocaleString('pt-BR')}</span> | 
+                    <span class="font-bold text-amber-400">Ocupação (Posições): ${globalPercentage}%</span> |
+                    <span class="font-semibold text-cyan-400">Soma Total de Itens: ${Math.round(totalItems).toLocaleString('pt-BR')}</span>
                 `;
             }
 
@@ -343,6 +354,10 @@
                                     } else {
                                         cell.classList.add('filled');
                                     }
+                                     if(data.percentage > 100) {
+                                        cell.classList.remove('filled', 'partial-fill');
+                                        cell.classList.add('over-capacity');
+                                    }
                                     cell.innerHTML = `<span class="text-xs font-bold pointer-events-none">${Math.round(data.percentage)}%</span>`;
                                 } else {
                                     cell.classList.add('filled');
@@ -417,45 +432,6 @@
             function displayAllRacks(sourceInventory = inventoryState, simulationDate = null) {
                 mainContent.innerHTML = '';
                 
-                const simulationHeader = document.createElement('div');
-                simulationHeader.className = 'flex justify-center items-center gap-4 mb-8 p-4 bg-gray-800 rounded-lg';
-                simulationHeader.innerHTML = `
-                    <div>
-                        <label for="simulation-date" class="mr-2 font-semibold">Simular para o dia:</label>
-                        <input type="date" id="simulation-date" class="bg-gray-700 text-white rounded-md p-2">
-                    </div>
-                    <button id="run-simulation-btn" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-md font-semibold">Simular Dia</button>
-                    <button id="clear-simulation-btn" class="px-4 py-2 bg-gray-600 hover:bg-gray-500 rounded-md font-semibold">Limpar Simulação</button>
-                    <p id="simulation-status" class="text-sm text-gray-400 h-6 ml-4"></p>
-                `;
-                mainContent.appendChild(simulationHeader);
-
-                if (simulationDate) {
-                    const activeSimDiv = document.createElement('div');
-                    activeSimDiv.className = 'text-center mb-4 p-3 bg-yellow-800 rounded-md';
-                    activeSimDiv.innerHTML = `<span class="font-bold">Modo de Simulação Ativo para o dia: ${new Date(simulationDate + 'T00:00:00').toLocaleDateString('pt-BR')}</span>`;
-                    mainContent.insertBefore(activeSimDiv, mainContent.childNodes[1]);
-                }
-
-                document.getElementById('run-simulation-btn').onclick = () => {
-                    const date = document.getElementById('simulation-date').value;
-                    const statusEl = document.getElementById('simulation-status');
-                    if (date) {
-                        if(statusEl) statusEl.textContent = 'Calculando...';
-                        setTimeout(() => {
-                            runSimulation(date);
-                        }, 50); 
-                    } else {
-                        if(statusEl) statusEl.textContent = 'Selecione uma data.';
-                        setTimeout(() => { if(statusEl) statusEl.textContent = ''; }, 2000);
-                    }
-                };
-                
-                document.getElementById('clear-simulation-btn').onclick = () => {
-                    displayAllRacks(inventoryState);
-                    updateGlobalStats(inventoryState);
-                };
-
                 for (let i = 1; i <= WAREHOUSE_CONFIG.totalRacks; i++) {
                     const rackContainer = document.createElement('div');
                     rackContainer.className = 'mb-12';
@@ -734,6 +710,7 @@
                     });
                 });
 
+
                 const saveButton = document.createElement('button');
                 saveButton.textContent = 'Salvar Alterações';
                 saveButton.className = 'mt-6 px-4 py-2 bg-green-600 hover:bg-green-500 rounded-md font-semibold transition-colors duration-150';
@@ -749,6 +726,7 @@
                     
                     PRODUCT_PARAMS_DATA = newParamsData;
                     saveData();
+                    
                     displayProductParamsScreen(true);
                 };
                 
@@ -901,16 +879,17 @@
                 
                 fileInput.addEventListener('change', (event) => {
                     processUploadedFile(event.target.files[0], (data) => {
-                         data.forEach(row => {
-                            if (String(row[0]).toLowerCase().includes('data')) return;
+                        data.forEach(row => {
+                            if (String(row[0]).toLowerCase().includes('data')) return; // skip header
                             if (row.length >= 3) {
                                 let date = row[0];
-                                 if (typeof date === 'number') {
+                                if (typeof date === 'number') {
                                     const jsDate = XLSX.SSF.parse_date_code(date);
                                     date = `${jsDate.y}-${String(jsDate.m).padStart(2,'0')}-${String(jsDate.d).padStart(2,'0')}`;
                                 } else if (typeof date === 'string' && date.includes('/')) {
                                     const [day, month, year] = date.split('/');
-                                    date = `${year.length === 2 ? '20' + year : year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+                                    const fullYear = year.length === 2 ? '20' + year : year;
+                                    date = `${fullYear}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
                                 }
                                 createProgrammingBlock({ date, code: row[1], quantity: row[2] }, container);
                             }
@@ -942,274 +921,6 @@
                 mainContent.appendChild(saveButton);
             }
 
-            function runSimulation(simulationDate) {
-                let simulatedInventory = JSON.parse(JSON.stringify(inventoryState));
-                
-                const today = new Date();
-                today.setHours(0, 0, 0, 0);
-
-                const simDate = new Date(simulationDate + 'T00:00:00');
-                simDate.setHours(0,0,0,0);
-                
-                if (simDate < today) {
-                    const statusEl = document.getElementById('simulation-status');
-                    if(statusEl) statusEl.textContent = 'Não é possível simular para uma data passada.';
-                    setTimeout(() => { if(statusEl) statusEl.textContent = ''; }, 3000);
-                    return;
-                }
-                
-                const timeDiff = simDate.getTime() - today.getTime();
-                const dayDifference = Math.ceil(timeDiff / (1000 * 3600 * 24));
-                
-                for (let i = 0; i <= dayDifference; i++) {
-                    const currentSimDay = new Date(today.getTime() + i * (1000 * 3600 * 24));
-                    const currentSimDayString = currentSimDay.toISOString().split('T')[0];
-                    
-                    if (currentSimDay > today) {
-                        const dailyConsumptionData = FORECAST_DATA[currentSimDayString] || {};
-
-                        for(const productCode in dailyConsumptionData){
-                            let consumptionNeeded = parseFloat(dailyConsumptionData[productCode]);
-                            if(isNaN(consumptionNeeded) || consumptionNeeded <= 0) continue;
-
-                            const addressesForProduct = Object.keys(simulatedInventory)
-                                .filter(addr => simulatedInventory[addr].item.toUpperCase() === productCode.toUpperCase())
-                                .sort(); 
-                            
-                            for(const address of addressesForProduct) {
-                                if(consumptionNeeded <= 0) break;
-                                
-                                let currentQty = parseFloat(simulatedInventory[address].quantity);
-                                const consumedFromThis = Math.min(currentQty, consumptionNeeded);
-                                
-                                currentQty -= consumedFromThis;
-                                consumptionNeeded -= consumedFromThis;
-
-                                if(currentQty <= 0) {
-                                    delete simulatedInventory[address];
-                                } else {
-                                    const productParam = PRODUCT_PARAMS_DATA.find(p => p.code.toUpperCase() === productCode.toUpperCase());
-                                    const maxQty = productParam ? parseFloat(productParam.maxQty) : 1;
-                                    simulatedInventory[address].quantity = currentQty;
-                                    simulatedInventory[address].percentage = maxQty > 0 ? (currentQty / maxQty) * 100 : 100;
-                                }
-                            }
-                        }
-                    }
-
-                    const arrivalsForThisDay = PROGRAMMING_DATA.filter(p => p.date === currentSimDayString);
-                    for (const arrival of arrivalsForThisDay) {
-                        let quantityToAllocate = parseFloat(arrival.quantity);
-                        if (isNaN(quantityToAllocate) || quantityToAllocate <= 0) continue;
-
-                        const productParam = PRODUCT_PARAMS_DATA.find(p => p.code.toUpperCase() === arrival.code.toUpperCase());
-                        const maxQty = productParam ? parseFloat(productParam.maxQty) : 1;
-                        if (maxQty <= 0) continue;
-
-                        const allLocations = [];
-                        for (let r = 1; r <= WAREHOUSE_CONFIG.totalRacks; r++) {
-                            const cols = WAREHOUSE_CONFIG.getColsForRack(r);
-                            const levelLettersReversed = [...WAREHOUSE_CONFIG.levelLetters].reverse();
-                            for (let c = 1; c <= cols; c++) {
-                                for (const level of levelLettersReversed) {
-                                    for (const s of WAREHOUSE_CONFIG.sides) {
-                                        allLocations.push(`PP${String(r).padStart(2, '0')}.${String(c).padStart(2, '0')}.${WAREHOUSE_CONFIG.levelMap[level]}.${s}`);
-                                    }
-                                }
-                            }
-                        }
-                        
-                        const partialPallets = allLocations
-                            .filter(addr => 
-                                simulatedInventory[addr] &&
-                                simulatedInventory[addr].item.toUpperCase() === arrival.code.toUpperCase() && 
-                                parseFloat(simulatedInventory[addr].quantity) < maxQty
-                            );
-                        
-                        for (const address of partialPallets) {
-                            if (quantityToAllocate <= 0) break;
-
-                            const pallet = simulatedInventory[address];
-                            const currentQty = parseFloat(pallet.quantity);
-                            const spaceAvailable = maxQty - currentQty;
-                            const qtyToAdd = Math.min(quantityToAllocate, spaceAvailable);
-
-                            pallet.quantity = currentQty + qtyToAdd;
-                            pallet.percentage = (pallet.quantity / maxQty) * 100;
-                            quantityToAllocate -= qtyToAdd;
-                        }
-
-                        if (quantityToAllocate > 0) {
-                            for(const address of allLocations){
-                                if(quantityToAllocate <= 0) break;
-                                if (!simulatedInventory[address]) {
-                                    const qtyForThisSlot = Math.min(quantityToAllocate, maxQty);
-                                    quantityToAllocate -= qtyForThisSlot;
-                                    simulatedInventory[address] = {
-                                        item: arrival.code,
-                                        quantity: qtyForThisSlot,
-                                        percentage: (qtyForThisSlot / maxQty) * 100
-                                    };
-                                }
-                            }
-                        }
-                    }
-                }
-
-                displayAllRacks(simulatedInventory, simulationDate);
-                updateGlobalStats(simulatedInventory);
-            }
-
-            function displayForecastScreen(showConfirmation = false, confirmationMessage = 'Salvo com sucesso!') {
-                mainContent.innerHTML = `
-                    <div class="max-w-4xl mx-auto">
-                        <div class="flex justify-between items-center mb-6">
-                            <h2 class="text-2xl font-bold text-amber-400">Cadastro de Forecast de Saídas</h2>
-                            <div class="flex items-center gap-4">
-                                <label for="forecast-file-upload" class="cursor-pointer px-4 py-2 bg-green-600 hover:bg-green-500 rounded-md font-semibold transition-colors duration-150">
-                                    Carregar Novo Forecast
-                                </label>
-                                <input id="forecast-file-upload" type="file" class="hidden" accept=".csv,.txt,.xls,.xlsx">
-                            </div>
-                        </div>
-                        <p id="forecast-status" class="text-center mb-4 h-6 text-green-400"></p>
-                        <div id="forecast-table-container" class="overflow-x-auto"></div>
-                        <button id="save-forecast-changes" class="mt-6 px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-md font-semibold transition-colors duration-150">Salvar Alterações</button>
-                    </div>`;
-
-                const fileInput = document.getElementById('forecast-file-upload');
-                const statusEl = document.getElementById('forecast-status');
-                const tableContainer = document.getElementById('forecast-table-container');
-                const saveButton = document.getElementById('save-forecast-changes');
-                
-                if(showConfirmation){
-                    statusEl.textContent = confirmationMessage;
-                    setTimeout(() => { statusEl.textContent = ''; }, 3000);
-                }
-
-                renderForecastTable(FORECAST_DATA, tableContainer);
-
-                fileInput.addEventListener('change', (event) => {
-                    const file = event.target.files[0];
-                    if (!file) return;
-                    
-                    statusEl.textContent = 'Processando arquivo...';
-                    processUploadedFile(file, (data) => {
-                         try {
-                            if (data.length < 2) throw new Error("Arquivo inválido ou vazio.");
-
-                            const newForecast = {};
-                            const header = data[0];
-                            const dates = header.slice(1).map(dateCell => {
-                                let dateStr = String(dateCell).trim();
-                                if (typeof dateCell === 'number') { // Excel date number
-                                    const jsDate = XLSX.SSF.parse_date_code(dateCell);
-                                    return `${jsDate.y}-${String(jsDate.m).padStart(2, '0')}-${String(jsDate.d).padStart(2, '0')}`;
-                                }
-                                if (dateStr.includes('/')) {
-                                    const parts = dateStr.split('/');
-                                    if(parts.length === 3) {
-                                        const [day, month, year] = parts.map(p => p.trim());
-                                        const fullYear = year.length === 2 ? '20' + year : year;
-                                        return `${fullYear}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-                                    }
-                                }
-                                return dateStr; // Assume YYYY-MM-DD
-                            });
-                            
-                            for (let i = 1; i < data.length; i++) {
-                                const row = data[i];
-                                const productCode = String(row[0]).trim().toUpperCase();
-                                if (!productCode) continue;
-
-                                for (let j = 1; j < row.length; j++) {
-                                    const date = dates[j - 1];
-                                    const quantity = parseFloat(row[j]);
-
-                                    if (date && !isNaN(quantity) && quantity > 0) {
-                                        if (!newForecast[date]) newForecast[date] = {};
-                                        newForecast[date][productCode] = quantity;
-                                    }
-                                }
-                            }
-                            
-                            FORECAST_DATA = newForecast; 
-                            nextRenderMessage = `Arquivo carregado! ${Object.keys(newForecast).length} dias, ${data.length - 1} produtos. Clique em 'Salvar'.`;
-                            refreshCurrentView();
-
-                        } catch (error) {
-                            console.error("Erro ao processar o arquivo de forecast:", error);
-                            nextRenderMessage = 'Erro ao processar. Verifique o formato do arquivo.';
-                            refreshCurrentView();
-                        } finally {
-                            fileInput.value = '';
-                        }
-                    });
-                });
-
-                saveButton.onclick = () => {
-                    const newForecast = {};
-                    mainContent.querySelectorAll('.forecast-row').forEach(row => {
-                        const productCode = row.querySelector('.forecast-code').textContent.trim();
-                        row.querySelectorAll('.forecast-qty').forEach(input => {
-                            const date = input.dataset.date;
-                            const quantity = parseFloat(input.value);
-                            if (date && productCode && !isNaN(quantity) && quantity > 0) {
-                                if(!newForecast[date]) newForecast[date] = {};
-                                newForecast[date][productCode] = quantity;
-                            }
-                        });
-                    });
-                    
-                    FORECAST_DATA = newForecast;
-                    saveData();
-                    nextRenderMessage = 'Alterações salvas com sucesso!';
-                    refreshCurrentView();
-                };
-            }
-            
-            function renderForecastTable(forecastData, container) {
-                const productForecasts = {};
-                const allDates = new Set();
-                for(const date in forecastData){
-                    allDates.add(date);
-                    for(const productCode in forecastData[date]){
-                        if(!productForecasts[productCode]){
-                            productForecasts[productCode] = {};
-                        }
-                        productForecasts[productCode][date] = forecastData[date][productCode];
-                    }
-                }
-                const sortedDates = Array.from(allDates).sort();
-
-                let tableHTML = '<table class="w-full text-left">';
-                tableHTML += '<thead class="bg-gray-800"><tr><th class="p-2 sticky left-0 bg-gray-800">Produto</th>';
-                sortedDates.forEach(date => {
-                    const dateObj = new Date(date + 'T00:00:00');
-                    const formattedDate = isNaN(dateObj) ? 'Data Inválida' : dateObj.toLocaleDateString('pt-BR');
-                    tableHTML += `<th class="p-2 text-center">${formattedDate}</th>`;
-                });
-                tableHTML += '<th></th></tr></thead>';
-                
-                tableHTML += '<tbody>';
-                Object.keys(productForecasts).sort().forEach(productCode => {
-                    tableHTML += `<tr class="forecast-row border-b border-gray-700">`;
-                    tableHTML += `<td class="p-2 font-semibold forecast-code sticky left-0 bg-gray-900">${productCode}</td>`;
-                    sortedDates.forEach(date => {
-                        const qty = productForecasts[productCode][date] || 0;
-                        tableHTML += `<td class="p-1"><input type="number" class="w-24 bg-gray-700 text-center rounded p-1 forecast-qty" data-date="${date}" value="${qty}"></td>`;
-                    });
-                    tableHTML += `<td><button class="remove-btn px-2 py-1 bg-red-700 hover:bg-red-600 rounded text-xs">X</button></td>`;
-                    tableHTML += `</tr>`;
-                });
-                tableHTML += '</tbody></table>';
-
-                container.innerHTML = tableHTML;
-                container.querySelectorAll('.remove-btn').forEach(btn => {
-                    btn.onclick = (e) => e.target.closest('.forecast-row').remove();
-                });
-            }
-
             function processUploadedFile(file, callback) {
                 const reader = new FileReader();
                 const extension = file.name.split('.').pop().toLowerCase();
@@ -1235,11 +946,12 @@
                 }
             }
             
+            
             // --- INITIAL APP STARTUP ---
             async function initialize() {
-                onAuthStateChanged(auth, (user) => {
+                onAuthStateChanged(auth, async (user) => {
                     if (user) {
-                        userId = user.uid; 
+                        userId = user.uid; // Capture the user ID
                         if(isInitialLoad){
                            setupRealtimeListener();
                         }
