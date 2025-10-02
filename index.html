@@ -166,11 +166,16 @@
                 }
 
                 const totalOccupied = Object.keys(sourceInventory).length;
+                const totalItems = Object.values(sourceInventory).reduce((sum, item) => {
+                    const quantity = parseFloat(item.quantity);
+                    return sum + (isNaN(quantity) ? 0 : quantity);
+                }, 0);
                 const globalPercentage = grandTotalPositions > 0 ? ((totalOccupied / grandTotalPositions) * 100).toFixed(1) : 0;
 
                 globalStatsPanel.innerHTML = `
-                    <span class="font-semibold text-white">Total Posições: ${grandTotalPositions}</span> | 
-                    <span class="font-semibold text-red-400">Total Ocupado: ${totalOccupied}</span> | 
+                    <span class="font-semibold text-white">Total Posições: ${grandTotalPositions.toLocaleString('pt-BR')}</span> | 
+                    <span class="font-semibold text-red-400">Posições Ocupadas: ${totalOccupied.toLocaleString('pt-BR')}</span> | 
+                    <span class="font-semibold text-cyan-400">Total de Itens: ${Math.round(totalItems).toLocaleString('pt-BR')}</span> |
                     <span class="font-bold text-amber-400">Ocupação Geral: ${globalPercentage}%</span>
                 `;
             }
