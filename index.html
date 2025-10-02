@@ -427,7 +427,7 @@
                 resetSelection();
             }
 
-            function displayAllRacks(sourceInventory = inventoryState, simulationDate = null) {
+            function displayAllRacks(sourceInventory = inventoryState) {
                 mainContent.innerHTML = '';
                 
                 const simulationHeader = document.createElement('div');
@@ -442,13 +442,6 @@
                     <p id="simulation-status" class="text-sm text-gray-400 h-6 ml-4"></p>
                 `;
                 mainContent.appendChild(simulationHeader);
-
-                if (simulationDate) {
-                    const activeSimDiv = document.createElement('div');
-                    activeSimDiv.className = 'text-center mb-4 p-3 bg-yellow-800 rounded-md';
-                    activeSimDiv.innerHTML = `<span class="font-bold">Modo de Simulação Ativo para o dia: ${new Date(simulationDate + 'T00:00:00').toLocaleDateString('pt-BR')}</span>`;
-                    mainContent.insertBefore(activeSimDiv, mainContent.childNodes[1]);
-                }
 
                 document.getElementById('run-simulation-btn').onclick = () => {
                     const date = document.getElementById('simulation-date').value;
