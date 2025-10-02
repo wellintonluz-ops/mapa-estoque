@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mapa de Estoque - Porta Pallets</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -49,11 +48,11 @@
         .pallet-cell.filled:hover {
             background-color: #1d4ed8; /* blue-700 */
         }
-        .pallet-cell.partial-fill {
-            background-color: #ef4444; /* red-500 */
+        .pallet-cell.over-capacity {
+            background-color: #f97316; /* orange-500 */
         }
-        .pallet-cell.partial-fill:hover {
-            background-color: #dc2626; /* red-600 */
+        .pallet-cell.over-capacity:hover {
+            background-color: #ea580c; /* orange-600 */
         }
         .menu-text {
             transition: opacity 0.2s ease-in-out, width 0.2s ease-in-out;
@@ -64,7 +63,6 @@
         }
         a[data-rack="import"].active-menu-item { background-color: #0F766E; } /* teal-700 */
         a[data-rack="params"].active-menu-item { background-color: #7E22CE; } /* purple-700 */
-        a[data-rack="forecast"].active-menu-item { background-color: #059669; } /* green-600 */
         a[data-rack="programming"].active-menu-item { background-color: #BE185D; } /* pink-700 */
         a[data-rack="instructions"].active-menu-item { background-color: #4338CA; } /* indigo-700 */
         a[data-rack="all"].active-menu-item { background-color: #B45309; } /* amber-700 */
@@ -133,7 +131,6 @@
             let userId = null;
             let isInitialLoad = true;
             let activeRackId = 'all';
-            let nextRenderMessage = null;
             // --- END FIREBASE SETUP ---
 
             const DEFAULT_INSTRUCTIONS = [
@@ -146,7 +143,6 @@
             let inventoryState = {};
             let PRODUCT_PARAMS_DATA = [];
             let PROGRAMMING_DATA = [];
-            let FORECAST_DATA = {};
             
             const WAREHOUSE_CONFIG = {
                 totalRacks: 26,
@@ -187,11 +183,10 @@
                 const publicDocRef = doc(db, "artifacts", appId, "public/data/mapData", "singleton");
                 try {
                     await setDoc(publicDocRef, {
-                        inventoryState: JSON.stringify(inventoryState),
+                        inventoryState,
                         INSTRUCTIONS_DATA,
                         PRODUCT_PARAMS_DATA,
-                        PROGRAMMING_DATA,
-                        FORECAST_DATA: JSON.stringify(FORECAST_DATA)
+                        PROGRAMMING_DATA
                     });
                 } catch (error) {
                     console.error("Erro ao salvar dados no Firestore: ", error);
@@ -209,18 +204,7 @@
                     if (docSnap.exists()) {
                         const data = docSnap.data();
                         INSTRUCTIONS_DATA = data.INSTRUCTIONS_DATA || DEFAULT_INSTRUCTIONS;
-                        try {
-                            inventoryState = data.inventoryState ? JSON.parse(data.inventoryState) : {};
-                        } catch (e) {
-                            console.error("Error parsing inventoryState from Firestore:", e);
-                            inventoryState = {};
-                        }
-                        try {
-                            FORECAST_DATA = data.FORECAST_DATA ? JSON.parse(data.FORECAST_DATA) : {};
-                        } catch (e) {
-                            console.error("Error parsing FORECAST_DATA from Firestore:", e);
-                            FORECAST_DATA = {};
-                        }
+                        inventoryState = data.inventoryState || {};
                         PRODUCT_PARAMS_DATA = data.PRODUCT_PARAMS_DATA || [];
                         PROGRAMMING_DATA = data.PROGRAMMING_DATA || [];
                     } else {
@@ -229,7 +213,6 @@
                         inventoryState = {};
                         PRODUCT_PARAMS_DATA = [];
                         PROGRAMMING_DATA = [];
-                        FORECAST_DATA = {};
                         saveData(); // Create the initial document
                     }
 
@@ -249,18 +232,13 @@
             }
 
             function refreshCurrentView() {
-                const message = nextRenderMessage;
-                nextRenderMessage = null; // Consume message
-
-                const currentRackId = activeRackId;
-                switch(currentRackId) {
+                switch(activeRackId) {
                     case 'import': displayImportScreen(); break;
                     case 'instructions': displayInstructions(); break;
-                    case 'params': displayProductParamsScreen(!!message, message); break;
-                    case 'programming': displayProgrammingScreen(!!message, message); break;
-                    case 'forecast': displayForecastScreen(!!message, message); break;
+                    case 'params': displayProductParamsScreen(); break;
+                    case 'programming': displayProgrammingScreen(); break;
                     case 'all': displayAllRacks(); break;
-                    default: displaySingleRack(parseInt(currentRackId, 10)); break;
+                    default: displaySingleRack(parseInt(activeRackId, 10)); break;
                 }
                 updateGlobalStats();
             }
@@ -271,7 +249,6 @@
                 const icons = {
                     import: `<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>`,
                     params: `<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>`,
-                    forecast: `<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>`,
                     programming: `<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>`,
                     instructions: `<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>`,
                     all: `<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" /></svg>`,
@@ -297,7 +274,6 @@
 
                 createMenuItem('import', 'Importar Relatório', icons.import, 'bg-teal-600 text-white hover:bg-teal-500');
                 createMenuItem('params', 'Parâmetros', icons.params, 'bg-purple-600 text-white hover:bg-purple-500');
-                createMenuItem('forecast', 'Forecast', icons.forecast, 'bg-green-600 text-white hover:bg-green-500');
                 createMenuItem('programming', 'Programação', icons.programming, 'bg-pink-600 text-white hover:bg-pink-500');
                 createMenuItem('instructions', 'Instruções', icons.instructions, 'bg-indigo-600 text-white hover:bg-indigo-500');
                 createMenuItem('all', 'Visualizar Todos', icons.all, 'bg-amber-600 text-white hover:bg-amber-500');
@@ -336,16 +312,13 @@
 
                             const data = sourceInventory[address];
                             if (data) {
+                                cell.classList.add('filled');
                                 cell.title = `${address}\nProduto: ${data.item}\nQtd: ${data.quantity}`;
                                 if (data.percentage !== undefined && !isNaN(data.percentage)) {
-                                    if (data.percentage < 99.9) {
-                                        cell.classList.add('partial-fill');
-                                    } else {
-                                        cell.classList.add('filled');
-                                    }
                                     cell.innerHTML = `<span class="text-xs font-bold pointer-events-none">${Math.round(data.percentage)}%</span>`;
-                                } else {
-                                    cell.classList.add('filled');
+                                    if(data.percentage > 100) {
+                                        cell.classList.add('over-capacity');
+                                    }
                                 }
                             } else {
                                 cell.title = address;
@@ -610,7 +583,7 @@
                         const parts = line.split(/[,;\t]/);
                         if (parts.length >= 3) {
                             const position = parts[0].trim().toUpperCase();
-                            const item = parts[1].trim().toUpperCase();
+                            const item = parts[1].trim();
                             const quantity = parts[2].trim();
 
                             if (positionRegex.test(position)) {
@@ -673,14 +646,14 @@
                 const importLabel = document.createElement('label');
                 importLabel.htmlFor = 'params-file-upload';
                 importLabel.className = 'cursor-pointer px-4 py-2 bg-gray-600 hover:bg-gray-500 rounded-md font-semibold transition-colors duration-150';
-                importLabel.textContent = 'Carregar Lote (.csv, .xlsx)';
+                importLabel.textContent = 'Carregar Lote (.csv)';
                 buttonsContainer.appendChild(importLabel);
                 
                 const fileInput = document.createElement('input');
                 fileInput.id = 'params-file-upload';
                 fileInput.type = 'file';
                 fileInput.className = 'hidden';
-                fileInput.accept = '.csv,.txt,.xls,.xlsx';
+                fileInput.accept = '.csv,.txt';
                 buttonsContainer.appendChild(fileInput);
 
                 const addButton = document.createElement('button');
@@ -698,8 +671,9 @@
                 const tableHeader = document.createElement('div');
                 tableHeader.className = 'grid grid-cols-12 gap-4 px-4 text-sm font-bold text-gray-400 uppercase';
                 tableHeader.innerHTML = `
-                    <div class="col-span-9">Código do Produto</div>
-                    <div class="col-span-2 text-center">Qtd. Máxima na Locação</div>
+                    <div class="col-span-5">Código do Produto</div>
+                    <div class="col-span-3 text-center">Qtd. Máxima na Locação</div>
+                    <div class="col-span-3 text-center">Média de Saída</div>
                     <div class="col-span-1"></div>
                 `;
                 container.appendChild(tableHeader);
@@ -709,8 +683,9 @@
                     paramBlock.className = 'param-block bg-gray-800 p-3 rounded-lg grid grid-cols-12 gap-4 items-center';
                     
                     paramBlock.innerHTML = `
-                        <input type="text" value="${item.code || ''}" placeholder="Ex: PROD-001" class="uppercase-input param-code col-span-9 bg-gray-700 text-white p-2 rounded-md border border-gray-600 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition">
-                        <input type="number" value="${item.maxQty || ''}" placeholder="Ex: 100" class="param-max-qty col-span-2 bg-gray-700 text-white p-2 rounded-md border border-gray-600 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition text-center">
+                        <input type="text" value="${item.code || ''}" placeholder="Ex: PROD-001" class="uppercase-input param-code col-span-5 bg-gray-700 text-white p-2 rounded-md border border-gray-600 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition">
+                        <input type="number" value="${item.maxQty || ''}" placeholder="Ex: 100" class="param-max-qty col-span-3 bg-gray-700 text-white p-2 rounded-md border border-gray-600 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition text-center">
+                        <input type="text" value="${item.avgOutflow || ''}" placeholder="Ex: 10/dia" class="uppercase-input param-avg-outflow col-span-3 bg-gray-700 text-white p-2 rounded-md border border-gray-600 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition text-center">
                         <button class="remove-btn col-span-1 px-3 py-2 bg-red-700 hover:bg-red-600 rounded-md text-sm font-medium transition-colors duration-150">Remover</button>
                     `;
                     
@@ -723,32 +698,45 @@
                 PRODUCT_PARAMS_DATA.forEach(item => createParamBlock(item, container));
                 
                 fileInput.addEventListener('change', (event) => {
-                    processUploadedFile(event.target.files[0], (data) => {
-                         data.forEach(row => {
-                            if (String(row[0]).toLowerCase().includes('código')) return; 
-                            if (row.length >= 2) {
-                                createParamBlock({ code: row[0], maxQty: row[1] }, container);
-                            }
-                        });
-                        fileInput.value = '';
-                    });
+                    const file = event.target.files[0];
+                    if (file) {
+                        const reader = new FileReader();
+                        reader.onload = (e) => {
+                            const text = e.target.result;
+                            const lines = text.split(/\r?\n/).filter(line => line.trim());
+                            
+                            lines.forEach(line => {
+                                if (line.toLowerCase().includes('código')) return; // skip header
+                                const parts = line.split(/[,;\t]/);
+                                if (parts.length >= 3) {
+                                    createParamBlock({ code: parts[0], maxQty: parts[1], avgOutflow: parts[2] }, container);
+                                }
+                            });
+                        };
+                        reader.readAsText(file);
+                    }
                 });
+
 
                 const saveButton = document.createElement('button');
                 saveButton.textContent = 'Salvar Alterações';
                 saveButton.className = 'mt-6 px-4 py-2 bg-green-600 hover:bg-green-500 rounded-md font-semibold transition-colors duration-150';
                 saveButton.onclick = () => {
                     const newParamsData = [];
-                    mainContent.querySelectorAll('#params-container .param-block').forEach(block => {
-                        const code = block.querySelector('.param-code').value.trim().toUpperCase();
+                    const paramBlocks = mainContent.querySelectorAll('#params-container .param-block');
+                    
+                    paramBlocks.forEach(block => {
+                        const code = block.querySelector('.param-code').value.trim();
                         const maxQty = block.querySelector('.param-max-qty').value.trim();
-                        if (code || maxQty) {
-                            newParamsData.push({ code, maxQty });
+                        const avgOutflow = block.querySelector('.param-avg-outflow').value.trim();
+                        if (code || maxQty || avgOutflow) {
+                            newParamsData.push({ code, maxQty, avgOutflow });
                         }
                     });
                     
                     PRODUCT_PARAMS_DATA = newParamsData;
                     saveData();
+                    
                     displayProductParamsScreen(true);
                 };
                 
@@ -845,14 +833,14 @@
                 const importLabel = document.createElement('label');
                 importLabel.htmlFor = 'programming-file-upload';
                 importLabel.className = 'cursor-pointer px-4 py-2 bg-gray-600 hover:bg-gray-500 rounded-md font-semibold transition-colors duration-150';
-                importLabel.textContent = 'Carregar Lote (.csv, .xlsx)';
+                importLabel.textContent = 'Carregar Lote (.csv)';
                 buttonsContainer.appendChild(importLabel);
                 
                 const fileInput = document.createElement('input');
                 fileInput.id = 'programming-file-upload';
                 fileInput.type = 'file';
                 fileInput.className = 'hidden';
-                fileInput.accept = '.csv,.txt,.xls,.xlsx';
+                fileInput.accept = '.csv,.txt';
                 buttonsContainer.appendChild(fileInput);
 
                 const addButton = document.createElement('button');
@@ -900,23 +888,28 @@
                 PROGRAMMING_DATA.forEach(item => createProgrammingBlock(item, container));
                 
                 fileInput.addEventListener('change', (event) => {
-                    processUploadedFile(event.target.files[0], (data) => {
-                         data.forEach(row => {
-                            if (String(row[0]).toLowerCase().includes('data')) return;
-                            if (row.length >= 3) {
-                                let date = row[0];
-                                 if (typeof date === 'number') {
-                                    const jsDate = XLSX.SSF.parse_date_code(date);
-                                    date = `${jsDate.y}-${String(jsDate.m).padStart(2,'0')}-${String(jsDate.d).padStart(2,'0')}`;
-                                } else if (typeof date === 'string' && date.includes('/')) {
-                                    const [day, month, year] = date.split('/');
-                                    date = `${year.length === 2 ? '20' + year : year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+                    const file = event.target.files[0];
+                    if (file) {
+                        const reader = new FileReader();
+                        reader.onload = (e) => {
+                            const text = e.target.result;
+                            const lines = text.split(/\r?\n/).filter(line => line.trim());
+                            lines.forEach(line => {
+                                if (line.toLowerCase().includes('data')) return; // skip header
+                                const parts = line.split(/[,;\t]/);
+                                if (parts.length >= 3) {
+                                    let date = parts[0].trim();
+                                    // Handle DD/MM/YYYY format
+                                    if (date.includes('/')) {
+                                        const [day, month, year] = date.split('/');
+                                        date = `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+                                    }
+                                    createProgrammingBlock({ date: date, code: parts[1], quantity: parts[2] }, container);
                                 }
-                                createProgrammingBlock({ date, code: row[1], quantity: row[2] }, container);
-                            }
-                        });
-                        fileInput.value = '';
-                    });
+                            });
+                        };
+                        reader.readAsText(file);
+                    }
                 });
 
                 const saveButton = document.createElement('button');
@@ -926,7 +919,7 @@
                     const newData = [];
                     mainContent.querySelectorAll('.programming-block').forEach(block => {
                         const date = block.querySelector('.programming-date').value;
-                        const code = block.querySelector('.programming-code').value.trim().toUpperCase();
+                        const code = block.querySelector('.programming-code').value.trim();
                         const quantity = block.querySelector('.programming-quantity').value.trim();
                         if (date && code && quantity) {
                             newData.push({ date, code, quantity });
@@ -966,14 +959,20 @@
                     const currentSimDayString = currentSimDay.toISOString().split('T')[0];
                     
                     if (currentSimDay > today) {
-                        const dailyConsumptionData = FORECAST_DATA[currentSimDayString] || {};
+                        const productConsumption = {};
+                        PRODUCT_PARAMS_DATA.forEach(param => {
+                            const dailyConsumption = parseFloat(String(param.avgOutflow).replace(/[^0-9.]/g, '')) || 0;
+                            if(dailyConsumption > 0){
+                               productConsumption[param.code.toUpperCase()] = dailyConsumption;
+                            }
+                        });
 
-                        for(const productCode in dailyConsumptionData){
-                            let consumptionNeeded = parseFloat(dailyConsumptionData[productCode]);
-                            if(isNaN(consumptionNeeded) || consumptionNeeded <= 0) continue;
+                        for(const productCode in productConsumption){
+                            let consumptionNeeded = productConsumption[productCode];
+                            if(consumptionNeeded <= 0) continue;
 
                             const addressesForProduct = Object.keys(simulatedInventory)
-                                .filter(addr => simulatedInventory[addr].item.toUpperCase() === productCode.toUpperCase())
+                                .filter(addr => simulatedInventory[addr].item.toUpperCase() === productCode)
                                 .sort(); 
                             
                             for(const address of addressesForProduct) {
@@ -988,7 +987,7 @@
                                 if(currentQty <= 0) {
                                     delete simulatedInventory[address];
                                 } else {
-                                    const productParam = PRODUCT_PARAMS_DATA.find(p => p.code.toUpperCase() === productCode.toUpperCase());
+                                    const productParam = PRODUCT_PARAMS_DATA.find(p => p.code.toUpperCase() === productCode);
                                     const maxQty = productParam ? parseFloat(productParam.maxQty) : 1;
                                     simulatedInventory[address].quantity = currentQty;
                                     simulatedInventory[address].percentage = maxQty > 0 ? (currentQty / maxQty) * 100 : 100;
@@ -1059,187 +1058,12 @@
                 displayAllRacks(simulatedInventory, simulationDate);
                 updateGlobalStats(simulatedInventory);
             }
-
-            function displayForecastScreen(showConfirmation = false, confirmationMessage = 'Salvo com sucesso!') {
-                mainContent.innerHTML = `
-                    <div class="max-w-4xl mx-auto">
-                        <div class="flex justify-between items-center mb-6">
-                            <h2 class="text-2xl font-bold text-amber-400">Cadastro de Forecast de Saídas</h2>
-                            <div class="flex items-center gap-4">
-                                <label for="forecast-file-upload" class="cursor-pointer px-4 py-2 bg-green-600 hover:bg-green-500 rounded-md font-semibold transition-colors duration-150">
-                                    Carregar Novo Forecast
-                                </label>
-                                <input id="forecast-file-upload" type="file" class="hidden" accept=".csv,.txt,.xls,.xlsx">
-                            </div>
-                        </div>
-                        <p id="forecast-status" class="text-center mb-4 h-6 text-green-400"></p>
-                        <div id="forecast-table-container" class="overflow-x-auto"></div>
-                        <button id="save-forecast-changes" class="mt-6 px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-md font-semibold transition-colors duration-150">Salvar Alterações</button>
-                    </div>`;
-
-                const fileInput = document.getElementById('forecast-file-upload');
-                const statusEl = document.getElementById('forecast-status');
-                const tableContainer = document.getElementById('forecast-table-container');
-                const saveButton = document.getElementById('save-forecast-changes');
-                
-                if(showConfirmation){
-                    statusEl.textContent = confirmationMessage;
-                    setTimeout(() => { statusEl.textContent = ''; }, 3000);
-                }
-
-                renderForecastTable(FORECAST_DATA, tableContainer);
-
-                fileInput.addEventListener('change', (event) => {
-                    const file = event.target.files[0];
-                    if (!file) return;
-                    
-                    statusEl.textContent = 'Processando arquivo...';
-                    processUploadedFile(file, (data) => {
-                         try {
-                            if (data.length < 2) throw new Error("Arquivo inválido ou vazio.");
-
-                            const newForecast = {};
-                            const header = data[0];
-                            const dates = header.slice(1).map(dateCell => {
-                                let dateStr = String(dateCell).trim();
-                                if (typeof dateCell === 'number') { // Excel date number
-                                    const jsDate = XLSX.SSF.parse_date_code(dateCell);
-                                    return `${jsDate.y}-${String(jsDate.m).padStart(2, '0')}-${String(jsDate.d).padStart(2, '0')}`;
-                                }
-                                if (dateStr.includes('/')) {
-                                    const parts = dateStr.split('/');
-                                    if(parts.length === 3) {
-                                        const [day, month, year] = parts.map(p => p.trim());
-                                        const fullYear = year.length === 2 ? '20' + year : year;
-                                        return `${fullYear}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-                                    }
-                                }
-                                return dateStr; // Assume YYYY-MM-DD
-                            });
-                            
-                            for (let i = 1; i < data.length; i++) {
-                                const row = data[i];
-                                const productCode = String(row[0]).trim().toUpperCase();
-                                if (!productCode) continue;
-
-                                for (let j = 1; j < row.length; j++) {
-                                    const date = dates[j - 1];
-                                    const quantity = parseFloat(row[j]);
-
-                                    if (date && !isNaN(quantity) && quantity > 0) {
-                                        if (!newForecast[date]) newForecast[date] = {};
-                                        newForecast[date][productCode] = quantity;
-                                    }
-                                }
-                            }
-                            
-                            FORECAST_DATA = newForecast; 
-                            nextRenderMessage = `Arquivo carregado! ${Object.keys(newForecast).length} dias, ${data.length - 1} produtos. Clique em 'Salvar'.`;
-                            refreshCurrentView();
-
-                        } catch (error) {
-                            console.error("Erro ao processar o arquivo de forecast:", error);
-                            nextRenderMessage = 'Erro ao processar. Verifique o formato do arquivo.';
-                            refreshCurrentView();
-                        } finally {
-                            fileInput.value = '';
-                        }
-                    });
-                });
-
-                saveButton.onclick = () => {
-                    const newForecast = {};
-                    mainContent.querySelectorAll('.forecast-row').forEach(row => {
-                        const productCode = row.querySelector('.forecast-code').textContent.trim();
-                        row.querySelectorAll('.forecast-qty').forEach(input => {
-                            const date = input.dataset.date;
-                            const quantity = parseFloat(input.value);
-                            if (date && productCode && !isNaN(quantity) && quantity > 0) {
-                                if(!newForecast[date]) newForecast[date] = {};
-                                newForecast[date][productCode] = quantity;
-                            }
-                        });
-                    });
-                    
-                    FORECAST_DATA = newForecast;
-                    saveData();
-                    nextRenderMessage = 'Alterações salvas com sucesso!';
-                    refreshCurrentView();
-                };
-            }
-            
-            function renderForecastTable(forecastData, container) {
-                const productForecasts = {};
-                const allDates = new Set();
-                for(const date in forecastData){
-                    allDates.add(date);
-                    for(const productCode in forecastData[date]){
-                        if(!productForecasts[productCode]){
-                            productForecasts[productCode] = {};
-                        }
-                        productForecasts[productCode][date] = forecastData[date][productCode];
-                    }
-                }
-                const sortedDates = Array.from(allDates).sort();
-
-                let tableHTML = '<table class="w-full text-left">';
-                tableHTML += '<thead class="bg-gray-800"><tr><th class="p-2 sticky left-0 bg-gray-800">Produto</th>';
-                sortedDates.forEach(date => {
-                    const dateObj = new Date(date + 'T00:00:00');
-                    const formattedDate = isNaN(dateObj) ? 'Data Inválida' : dateObj.toLocaleDateString('pt-BR');
-                    tableHTML += `<th class="p-2 text-center">${formattedDate}</th>`;
-                });
-                tableHTML += '<th></th></tr></thead>';
-                
-                tableHTML += '<tbody>';
-                Object.keys(productForecasts).sort().forEach(productCode => {
-                    tableHTML += `<tr class="forecast-row border-b border-gray-700">`;
-                    tableHTML += `<td class="p-2 font-semibold forecast-code sticky left-0 bg-gray-900">${productCode}</td>`;
-                    sortedDates.forEach(date => {
-                        const qty = productForecasts[productCode][date] || 0;
-                        tableHTML += `<td class="p-1"><input type="number" class="w-24 bg-gray-700 text-center rounded p-1 forecast-qty" data-date="${date}" value="${qty}"></td>`;
-                    });
-                    tableHTML += `<td><button class="remove-btn px-2 py-1 bg-red-700 hover:bg-red-600 rounded text-xs">X</button></td>`;
-                    tableHTML += `</tr>`;
-                });
-                tableHTML += '</tbody></table>';
-
-                container.innerHTML = tableHTML;
-                container.querySelectorAll('.remove-btn').forEach(btn => {
-                    btn.onclick = (e) => e.target.closest('.forecast-row').remove();
-                });
-            }
-
-            function processUploadedFile(file, callback) {
-                const reader = new FileReader();
-                const extension = file.name.split('.').pop().toLowerCase();
-
-                if (extension === 'xlsx' || extension === 'xls') {
-                    reader.onload = (e) => {
-                        const data = new Uint8Array(e.target.result);
-                        const workbook = XLSX.read(data, { type: 'array', cellDates: true, dateNF:'dd/mm/yyyy' });
-                        const firstSheetName = workbook.SheetNames[0];
-                        const worksheet = workbook.Sheets[firstSheetName];
-                        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false, dateNF:'dd/mm/yyyy' });
-                        callback(json);
-                    };
-                    reader.readAsArrayBuffer(file);
-                } else { // csv, txt
-                    reader.onload = (e) => {
-                        const text = e.target.result;
-                        const lines = text.split(/\r?\n/).filter(line => line.trim());
-                        const dataAsArrays = lines.map(line => line.split(/[,;\t]/));
-                        callback(dataAsArrays);
-                    };
-                    reader.readAsText(file);
-                }
-            }
             
             // --- INITIAL APP STARTUP ---
             async function initialize() {
                 onAuthStateChanged(auth, (user) => {
                     if (user) {
-                        userId = user.uid; 
+                        userId = user.uid; // Capture the user ID
                         if(isInitialLoad){
                            setupRealtimeListener();
                         }
