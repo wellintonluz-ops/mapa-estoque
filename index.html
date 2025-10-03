@@ -176,7 +176,7 @@
                 }
 
                 const totalOccupied = Object.keys(sourceInventory).length;
-                 const totalItems = Object.values(sourceInventory).reduce((sum, item) => {
+                const totalItems = Object.values(sourceInventory).reduce((sum, item) => {
                     const quantity = parseFloat(item.quantity);
                     return sum + (isNaN(quantity) ? 0 : quantity);
                 }, 0);
@@ -427,7 +427,7 @@
                 resetSelection();
             }
 
-            function displayAllRacks(sourceInventory = inventoryState) {
+            function displayAllRacks(sourceInventory = inventoryState, simulationDate = null) {
                 mainContent.innerHTML = '';
                 
                 const simulationHeader = document.createElement('div');
@@ -443,6 +443,13 @@
                 `;
                 mainContent.appendChild(simulationHeader);
 
+                if (simulationDate) {
+                    const activeSimDiv = document.createElement('div');
+                    activeSimDiv.className = 'text-center mb-4 p-3 bg-yellow-800 rounded-md';
+                    activeSimDiv.innerHTML = `<span class="font-bold">Modo de Simulação Ativo para o dia: ${new Date(simulationDate + 'T00:00:00').toLocaleDateString('pt-BR')}</span>`;
+                    mainContent.insertBefore(activeSimDiv, mainContent.childNodes[0]);
+                }
+                
                 document.getElementById('run-simulation-btn').onclick = () => {
                     const date = document.getElementById('simulation-date').value;
                     const statusEl = document.getElementById('simulation-status');
@@ -740,10 +747,12 @@
                     });
                 });
 
+                const actionButtons = document.createElement('div');
+                actionButtons.className = 'mt-6 flex items-center gap-4';
 
                 const saveButton = document.createElement('button');
                 saveButton.textContent = 'Salvar Alterações';
-                saveButton.className = 'mt-6 px-4 py-2 bg-green-600 hover:bg-green-500 rounded-md font-semibold transition-colors duration-150';
+                saveButton.className = 'px-4 py-2 bg-green-600 hover:bg-green-500 rounded-md font-semibold transition-colors duration-150';
                 saveButton.onclick = () => {
                     const newParamsData = [];
                     mainContent.querySelectorAll('#params-container .param-block').forEach(block => {
@@ -774,9 +783,36 @@
                     saveData();
                     displayProductParamsScreen(true);
                 };
+
+                const deleteAllButton = document.createElement('button');
+                deleteAllButton.textContent = 'Excluir Todos';
+                deleteAllButton.className = 'px-4 py-2 bg-red-700 hover:bg-red-600 rounded-md font-semibold transition-colors duration-150';
+                deleteAllButton.onclick = () => {
+                    if(deleteAllButton.dataset.confirm) {
+                        PRODUCT_PARAMS_DATA = [];
+                        saveData();
+                        displayProductParamsScreen(true, "Todos os parâmetros foram excluídos.");
+                    } else {
+                        deleteAllButton.dataset.confirm = true;
+                        deleteAllButton.textContent = "Confirmar Exclusão?";
+                        deleteAllButton.classList.remove('bg-red-700', 'hover:bg-red-600');
+                        deleteAllButton.classList.add('bg-yellow-500', 'hover:bg-yellow-400', 'text-black');
+                        setTimeout(() => {
+                           if(deleteAllButton.dataset.confirm){
+                                delete deleteAllButton.dataset.confirm;
+                                deleteAllButton.textContent = 'Excluir Todos';
+                                deleteAllButton.classList.remove('bg-yellow-500', 'hover:bg-yellow-400', 'text-black');
+                                deleteAllButton.classList.add('bg-red-700', 'hover:bg-red-600');
+                           }
+                        }, 3000);
+                    }
+                };
+
+                actionButtons.appendChild(saveButton);
+                actionButtons.appendChild(deleteAllButton);
                 
                 mainContent.appendChild(container);
-                mainContent.appendChild(saveButton);
+                mainContent.appendChild(actionButtons);
             }
 
             function handleCellToggle(cell, rackNumber) {
@@ -943,9 +979,12 @@
                     });
                 });
 
+                const actionButtons = document.createElement('div');
+                actionButtons.className = 'mt-6 flex items-center gap-4';
+
                 const saveButton = document.createElement('button');
                 saveButton.textContent = 'Salvar Alterações';
-                saveButton.className = 'mt-6 px-4 py-2 bg-green-600 hover:bg-green-500 rounded-md font-semibold transition-colors duration-150';
+                saveButton.className = 'px-4 py-2 bg-green-600 hover:bg-green-500 rounded-md font-semibold transition-colors duration-150';
                 saveButton.onclick = () => {
                     const newData = [];
                     mainContent.querySelectorAll('.programming-block').forEach(block => {
@@ -962,8 +1001,34 @@
                     displayProgrammingScreen(true);
                 };
                 
+                const deleteAllButton = document.createElement('button');
+                deleteAllButton.textContent = 'Excluir Tudo';
+                deleteAllButton.className = 'px-4 py-2 bg-red-700 hover:bg-red-600 rounded-md font-semibold transition-colors duration-150';
+                deleteAllButton.onclick = () => {
+                    if(deleteAllButton.dataset.confirm) {
+                        PROGRAMMING_DATA = [];
+                        saveData();
+                        displayProgrammingScreen(true, "Toda a programação foi excluída.");
+                    } else {
+                        deleteAllButton.dataset.confirm = true;
+                        deleteAllButton.textContent = "Confirmar Exclusão?";
+                        deleteAllButton.classList.remove('bg-red-700', 'hover:bg-red-600');
+                        deleteAllButton.classList.add('bg-yellow-500', 'hover:bg-yellow-400', 'text-black');
+                        setTimeout(() => {
+                           if(deleteAllButton.dataset.confirm){
+                                delete deleteAllButton.dataset.confirm;
+                                deleteAllButton.textContent = 'Excluir Tudo';
+                                deleteAllButton.classList.remove('bg-yellow-500', 'hover:bg-yellow-400', 'text-black');
+                                deleteAllButton.classList.add('bg-red-700', 'hover:bg-red-600');
+                           }
+                        }, 3000);
+                    }
+                };
+                
+                actionButtons.appendChild(saveButton);
+                actionButtons.appendChild(deleteAllButton);
                 mainContent.appendChild(container);
-                mainContent.appendChild(saveButton);
+                mainContent.appendChild(actionButtons);
             }
 
             function processUploadedFile(file, callback) {
@@ -1005,13 +1070,17 @@
                         </div>
                         <p id="forecast-status" class="text-center mb-4 h-6 text-green-400"></p>
                         <div id="forecast-table-container" class="overflow-x-auto"></div>
-                        <button id="save-forecast-changes" class="mt-6 px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-md font-semibold transition-colors duration-150">Salvar Alterações</button>
+                        <div class="mt-6 flex items-center gap-4">
+                            <button id="save-forecast-changes" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-md font-semibold transition-colors duration-150">Salvar Alterações</button>
+                            <button id="delete-all-forecast" class="px-4 py-2 bg-red-700 hover:bg-red-600 rounded-md font-semibold transition-colors duration-150">Excluir Tudo</button>
+                        </div>
                     </div>`;
 
                 const fileInput = document.getElementById('forecast-file-upload');
                 const statusEl = document.getElementById('forecast-status');
                 const tableContainer = document.getElementById('forecast-table-container');
                 const saveButton = document.getElementById('save-forecast-changes');
+                const deleteAllButton = document.getElementById('delete-all-forecast');
                 
                 if(showConfirmation){
                     statusEl.textContent = confirmationMessage;
@@ -1097,6 +1166,27 @@
                     nextRenderMessage = 'Alterações salvas com sucesso!';
                     refreshCurrentView();
                 };
+
+                deleteAllButton.onclick = () => {
+                    if(deleteAllButton.dataset.confirm) {
+                        FORECAST_DATA = {};
+                        saveData();
+                        displayForecastScreen(true, "Todo o forecast foi excluído.");
+                    } else {
+                        deleteAllButton.dataset.confirm = true;
+                        deleteAllButton.textContent = "Confirmar Exclusão?";
+                        deleteAllButton.classList.remove('bg-red-700', 'hover:bg-red-600');
+                        deleteAllButton.classList.add('bg-yellow-500', 'hover:bg-yellow-400', 'text-black');
+                        setTimeout(() => {
+                           if(deleteAllButton.dataset.confirm){
+                                delete deleteAllButton.dataset.confirm;
+                                deleteAllButton.textContent = 'Excluir Tudo';
+                                deleteAllButton.classList.remove('bg-yellow-500', 'hover:bg-yellow-400', 'text-black');
+                                deleteAllButton.classList.add('bg-red-700', 'hover:bg-red-600');
+                           }
+                        }, 3000);
+                    }
+                };
             }
 
             function renderForecastTable(forecastData, container) {
@@ -1140,7 +1230,7 @@
                     btn.onclick = (e) => e.target.closest('.forecast-row').remove();
                 });
             }
-
+            
             function runSimulation(simulationDate) {
                 let simulatedInventory = JSON.parse(JSON.stringify(inventoryState));
                 
