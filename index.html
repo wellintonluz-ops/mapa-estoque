@@ -122,15 +122,17 @@
             const globalStatsPanel = document.getElementById('global-stats-panel');
             
             // --- FIREBASE SETUP ---
-            // It's recommended to use environment variables for Firebase config in a real project
             const firebaseConfigFromEnv = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+            
+            // Restoring the original credentials provided by the user.
             const firebaseConfig = firebaseConfigFromEnv || {
-                apiKey: "YOUR_API_KEY", // Replace with your actual config
-                authDomain: "YOUR_AUTH_DOMAIN",
-                projectId: "YOUR_PROJECT_ID",
-                storageBucket: "YOUR_STORAGE_BUCKET",
-                messagingSenderId: "YOUR_SENDER_ID",
-                appId: "YOUR_APP_ID"
+                apiKey: "AIzaSyDi9i59ySZSaBnniQUwBKcKlst2PA8AgTc",
+                authDomain: "mapa-estoque.firebaseapp.com",
+                projectId: "mapa-estoque",
+                storageBucket: "mapa-estoque.appspot.com",
+                messagingSenderId: "877978797929",
+                appId: "1:877978797929:web:3a6c7c006a32fe5d0b5ff8",
+                measurementId: "G-4GNC5SKF17"
             };
             const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
@@ -1553,9 +1555,4 @@
     </script>
 </body>
 </html>
-
-
-
-
-
 
