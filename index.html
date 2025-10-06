@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mapa de Estoque - Porta Pallets</title>
+    <title>MRP - Módulo de Estoque</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -68,6 +68,7 @@
         .active-menu-item {
             background-color: #374151; /* gray-700 */
         }
+        a[data-rack="dashboard"].active-menu-item { background-color: #ca8a04; } /* yellow-600 */
         a[data-rack="import"].active-menu-item { background-color: #0F766E; } /* teal-700 */
         a[data-rack="params"].active-menu-item { background-color: #7E22CE; } /* purple-700 */
         a[data-rack="forecast"].active-menu-item { background-color: #059669; } /* green-600 */
@@ -87,7 +88,7 @@
     <div class="flex flex-col h-screen">
         <!-- Header -->
         <header class="bg-gray-800 shadow-lg p-4 z-30">
-            <h1 class="text-2xl font-bold text-center text-amber-400">Mapa de Estoque Interativo</h1>
+            <h1 class="text-2xl font-bold text-center text-amber-400">MRP - Módulo de Estoque</h1>
             <div id="global-stats-panel" class="text-center text-gray-300 mt-2 text-sm"></div>
             <p id="details-panel" class="text-center text-gray-300 mt-1 h-6">Carregando dados...</p>
         </header>
@@ -108,11 +109,11 @@
         </div>
     </div>
     
-    <!-- Firebase SDKs -->
+    <!-- Firebase SDKs - Updated to v11.6.1 -->
     <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-app.js";
-        import { getFirestore, doc, setDoc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-auth.js";
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getFirestore, doc, setDoc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 
         document.addEventListener('DOMContentLoaded', () => {
             const rackSelector = document.getElementById('rack-selector');
@@ -121,15 +122,15 @@
             const globalStatsPanel = document.getElementById('global-stats-panel');
             
             // --- FIREBASE SETUP ---
+            // It's recommended to use environment variables for Firebase config in a real project
             const firebaseConfigFromEnv = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
             const firebaseConfig = firebaseConfigFromEnv || {
-                apiKey: "AIzaSyDi9i59ySZSaBnniQUwBKcKlst2PA8AgTc",
-                authDomain: "mapa-estoque.firebaseapp.com",
-                projectId: "mapa-estoque",
-                storageBucket: "mapa-estoque.appspot.com",
-                messagingSenderId: "877978797929",
-                appId: "1:877978797929:web:3a6c7c006a32fe5d0b5ff8",
-                measurementId: "G-4GNC5SKF17"
+                apiKey: "YOUR_API_KEY", // Replace with your actual config
+                authDomain: "YOUR_AUTH_DOMAIN",
+                projectId: "YOUR_PROJECT_ID",
+                storageBucket: "YOUR_STORAGE_BUCKET",
+                messagingSenderId: "YOUR_SENDER_ID",
+                appId: "YOUR_APP_ID"
             };
             const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
@@ -138,7 +139,7 @@
             const auth = getAuth(app);
             let userId = null;
             let isInitialLoad = true;
-            let activeRackId = 'all';
+            let activeRackId = 'dashboard'; // Start with the new dashboard
             let nextRenderMessage = null;
             // --- END FIREBASE SETUP ---
 
@@ -265,6 +266,7 @@
 
                 const currentRackId = activeRackId;
                 switch(currentRackId) {
+                    case 'dashboard': displayDashboard(); break;
                     case 'import': displayImportScreen(); break;
                     case 'instructions': displayInstructions(); break;
                     case 'params': displayProductParamsScreen(!!message, message); break;
@@ -280,12 +282,13 @@
                 rackSelector.innerHTML = '';
 
                 const icons = {
+                    dashboard: `<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" /></svg>`,
                     import: `<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>`,
                     params: `<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>`,
                     forecast: `<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>`,
                     programming: `<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>`,
                     instructions: `<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>`,
-                    all: `<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" /></svg>`,
+                    all: `<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>`,
                     rack: `<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg>`
                 };
 
@@ -305,28 +308,178 @@
                     listItem.appendChild(link);
                     rackSelector.appendChild(listItem);
                 };
+                
+                // Add new Dashboard link first
+                createMenuItem('dashboard', 'Dashboard', icons.dashboard, 'bg-yellow-700 text-white hover:bg-yellow-600');
+                
+                const separator1 = document.createElement('hr');
+                separator1.className = "border-gray-700 my-4";
+                rackSelector.appendChild(separator1);
 
                 createMenuItem('import', 'Importar Relatório', icons.import, 'bg-teal-600 text-white hover:bg-teal-500');
                 createMenuItem('params', 'Parâmetros', icons.params, 'bg-purple-600 text-white hover:bg-purple-500');
                 createMenuItem('forecast', 'Forecast', icons.forecast, 'bg-green-600 text-white hover:bg-green-500');
                 createMenuItem('programming', 'Programação', icons.programming, 'bg-pink-600 text-white hover:bg-pink-500');
                 createMenuItem('instructions', 'Instruções', icons.instructions, 'bg-indigo-600 text-white hover:bg-indigo-500');
+                
+                const separator2 = document.createElement('hr');
+                separator2.className = "border-gray-700 my-4";
+                rackSelector.appendChild(separator2);
+                
                 createMenuItem('all', 'Visualizar Todos', icons.all, 'bg-amber-600 text-white hover:bg-amber-500');
                 
-                const separator = document.createElement('hr');
-                separator.className = "border-gray-700 my-4";
-                rackSelector.appendChild(separator);
+                const separator3 = document.createElement('hr');
+                separator3.className = "border-gray-700 my-4";
+                rackSelector.appendChild(separator3);
                 
                 for (let i = 1; i <= WAREHOUSE_CONFIG.totalRacks; i++) {
                      createMenuItem(i, `Porta Pallet ${String(i).padStart(2, '0')}`, icons.rack, 'text-gray-400 hover:bg-gray-700 hover:text-white', true);
                 }
             }
             
+            // --- NEW DASHBOARD FUNCTION ---
+            function displayDashboard() {
+                mainContent.innerHTML = '';
+                
+                const header = document.createElement('h2');
+                header.className = 'text-3xl font-bold text-amber-400 mb-6';
+                header.textContent = 'Dashboard Operacional';
+                mainContent.appendChild(header);
+
+                // KPI Cards
+                const kpiContainer = document.createElement('div');
+                kpiContainer.className = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8';
+                
+                let grandTotalPositions = 0;
+                for (let i = 1; i <= WAREHOUSE_CONFIG.totalRacks; i++) {
+                    grandTotalPositions += WAREHOUSE_CONFIG.getColsForRack(i) * WAREHOUSE_CONFIG.levelLetters.length * WAREHOUSE_CONFIG.sides.length;
+                }
+                const totalOccupied = Object.keys(inventoryState).length;
+                const totalItems = Object.values(inventoryState).reduce((sum, item) => sum + (parseFloat(item.quantity) || 0), 0);
+                const globalPercentage = grandTotalPositions > 0 ? ((totalOccupied / grandTotalPositions) * 100).toFixed(1) : 0;
+                const distinctSKUs = new Set(Object.values(inventoryState).map(item => item.item)).size;
+
+                const kpis = [
+                    { title: 'Ocupação Global', value: `${globalPercentage}%`, color: 'text-amber-400' },
+                    { title: 'Posições Ocupadas', value: totalOccupied.toLocaleString('pt-BR'), color: 'text-red-400' },
+                    { title: 'Total de Itens', value: Math.round(totalItems).toLocaleString('pt-BR'), color: 'text-cyan-400' },
+                    { title: 'SKUs Distintos', value: distinctSKUs.toLocaleString('pt-BR'), color: 'text-green-400' },
+                ];
+
+                kpis.forEach(kpi => {
+                    const card = document.createElement('div');
+                    card.className = 'bg-gray-800 p-6 rounded-lg shadow-lg';
+                    card.innerHTML = `
+                        <h3 class="text-sm font-medium text-gray-400">${kpi.title}</h3>
+                        <p class="text-3xl font-bold mt-2 ${kpi.color}">${kpi.value}</p>
+                    `;
+                    kpiContainer.appendChild(card);
+                });
+                mainContent.appendChild(kpiContainer);
+
+                // Analysis Section
+                const analysisContainer = document.createElement('div');
+                analysisContainer.className = 'grid grid-cols-1 lg:grid-cols-2 gap-8';
+                
+                // Upcoming Movements
+                const movementsContainer = document.createElement('div');
+                movementsContainer.className = 'bg-gray-800 p-6 rounded-lg shadow-lg';
+                movementsContainer.innerHTML = `<h3 class="text-xl font-semibold mb-4 text-white">Próximas Movimentações (7 dias)</h3>`;
+
+                const today = new Date();
+                today.setHours(0,0,0,0);
+                const sevenDaysLater = new Date(today);
+                sevenDaysLater.setDate(today.getDate() + 7);
+                
+                // Arrivals
+                const arrivalsContent = document.createElement('div');
+                arrivalsContent.innerHTML = `<h4 class="font-bold text-pink-400 mb-2">Chegadas Programadas</h4>`;
+                const upcomingArrivals = PROGRAMMING_DATA
+                    .filter(p => { const d = new Date(p.date+'T00:00:00'); return d >= today && d <= sevenDaysLater; })
+                    .sort((a,b) => new Date(a.date) - new Date(b.date));
+                
+                if (upcomingArrivals.length > 0) {
+                    const list = document.createElement('ul');
+                    list.className = 'list-disc list-inside space-y-1 text-gray-300';
+                    upcomingArrivals.slice(0, 5).forEach(arrival => {
+                        const d = new Date(arrival.date + 'T00:00:00');
+                        list.innerHTML += `<li><strong>${d.toLocaleDateString('pt-BR')}</strong>: ${arrival.quantity} un. de ${arrival.code}</li>`;
+                    });
+                    arrivalsContent.appendChild(list);
+                } else {
+                    arrivalsContent.innerHTML += `<p class="text-sm text-gray-400">Nenhuma chegada nos próximos 7 dias.</p>`;
+                }
+                movementsContainer.appendChild(arrivalsContent);
+
+                // Departures
+                const departuresContent = document.createElement('div');
+                departuresContent.innerHTML = `<h4 class="font-bold text-green-400 mt-4 mb-2">Saídas Previstas (Forecast)</h4>`;
+                let upcomingDepartures = [];
+                for(let i=0; i<7; i++){
+                    const checkDate = new Date(today);
+                    // Ajuste: Inicia a contagem a partir de amanhã (i + 1)
+                    checkDate.setDate(today.getDate() + i + 1);
+                    const dateStr = checkDate.toISOString().split('T')[0];
+                    if(FORECAST_DATA[dateStr]){
+                        Object.keys(FORECAST_DATA[dateStr]).forEach(productCode => {
+                             upcomingDepartures.push({ date: dateStr, code: productCode, quantity: FORECAST_DATA[dateStr][productCode] });
+                        });
+                    }
+                }
+
+                if (upcomingDepartures.length > 0) {
+                    const list = document.createElement('ul');
+                    list.className = 'list-disc list-inside space-y-1 text-gray-300';
+                    upcomingDepartures.slice(0, 5).forEach(departure => {
+                        const d = new Date(departure.date + 'T00:00:00');
+                        list.innerHTML += `<li><strong>${d.toLocaleDateString('pt-BR')}</strong>: ${departure.quantity} un. de ${departure.code}</li>`;
+                    });
+                    departuresContent.appendChild(list);
+                } else {
+                    departuresContent.innerHTML += `<p class="text-sm text-gray-400">Nenhuma saída prevista nos próximos 7 dias.</p>`;
+                }
+                movementsContainer.appendChild(departuresContent);
+
+
+                // Stock Analysis
+                const stockAnalysisContainer = document.createElement('div');
+                stockAnalysisContainer.className = 'bg-gray-800 p-6 rounded-lg shadow-lg';
+                stockAnalysisContainer.innerHTML = `<h3 class="text-xl font-semibold mb-4 text-white">Análise de Estoque</h3>`;
+                
+                const productQuantities = {};
+                Object.values(inventoryState).forEach(pos => {
+                    if (pos.item !== 'OCUPADO MANUALMENTE') {
+                        productQuantities[pos.item] = (productQuantities[pos.item] || 0) + parseFloat(pos.quantity || 0);
+                    }
+                });
+
+                const topProducts = Object.entries(productQuantities).sort((a,b) => b[1] - a[1]).slice(0,5);
+                
+                stockAnalysisContainer.innerHTML += `<h4 class="font-bold text-purple-400 mb-2">Top 5 Produtos em Estoque</h4>`;
+                if(topProducts.length > 0){
+                    const table = document.createElement('table');
+                    table.className = 'w-full text-sm text-left';
+                    table.innerHTML = `<thead class="text-xs text-gray-400 uppercase"><tr><th class="py-2">Produto</th><th class="py-2 text-right">Quantidade Total</th></tr></thead><tbody>`;
+                    topProducts.forEach(([code, qty]) => {
+                        table.innerHTML += `<tr class="border-b border-gray-700"><td class="py-2">${code}</td><td class="py-2 text-right">${Math.round(qty).toLocaleString('pt-BR')}</td></tr>`;
+                    });
+                    table.innerHTML += `</tbody>`;
+                    stockAnalysisContainer.appendChild(table);
+                } else {
+                    stockAnalysisContainer.innerHTML += `<p class="text-sm text-gray-400">Nenhum produto em estoque.</p>`;
+                }
+
+                analysisContainer.appendChild(movementsContainer);
+                analysisContainer.appendChild(stockAnalysisContainer);
+                mainContent.appendChild(analysisContainer);
+            }
+
+
             function createRackGridElement(rackNumber, sourceInventory = inventoryState) {
                 const cols = WAREHOUSE_CONFIG.getColsForRack(rackNumber);
                 const grid = document.createElement('div');
                 grid.className = 'grid gap-1.5';
-                grid.style.gridTemplateColumns = `repeat(${cols}, 80px)`;
+                grid.style.gridTemplateColumns = `repeat(${cols}, 72px)`; // Aumentado para garantir espaço para o texto
 
                 WAREHOUSE_CONFIG.levelLetters.forEach(levelLetter => {
                     for (let col = 1; col <= cols; col++) {
@@ -339,7 +492,8 @@
                             const address = `PP${String(rackNumber).padStart(2, '0')}.${String(col).padStart(2, '0')}.${levelNum}.${side}`;
                             cell.dataset.address = address;
                             
-                            let cellClasses = 'pallet-cell flex-1 h-full bg-gray-700 cursor-pointer flex items-center justify-center';
+                            // Alterado de flex-1 para w-1/2 para forçar tamanho igual e impedir que o conteúdo redimensione a célula
+                            let cellClasses = 'pallet-cell w-1/2 h-full bg-gray-700 cursor-pointer flex items-center justify-center';
                             if (index === 0) {
                                 cellClasses += ' border-r border-black';
                             }
@@ -447,7 +601,8 @@
                     const activeSimDiv = document.createElement('div');
                     activeSimDiv.className = 'text-center mb-4 p-3 bg-yellow-800 rounded-md';
                     activeSimDiv.innerHTML = `<span class="font-bold">Modo de Simulação Ativo para o dia: ${new Date(simulationDate + 'T00:00:00').toLocaleDateString('pt-BR')}</span>`;
-                    mainContent.insertBefore(activeSimDiv, mainContent.childNodes[0]);
+                    // Prepend after the simulation controls
+                    mainContent.insertBefore(activeSimDiv, simulationHeader.nextSibling);
                 }
                 
                 document.getElementById('run-simulation-btn').onclick = () => {
@@ -585,7 +740,7 @@
                                 <input id="file-upload" type="file" class="hidden" accept=".csv,.txt">
                                 <button id="import-button" class="px-6 py-2 bg-green-600 hover:bg-green-500 rounded-md font-semibold transition-colors duration-150">Importar Dados</button>
                             </div>
-                             <p id="import-status" class="text-center mt-4 h-6"></p>
+                           <p id="import-status" class="text-center mt-4 h-6"></p>
                         </div>
                     </div>
                 `;
@@ -614,7 +769,7 @@
                     const lines = data.split(/\r?\n/);
                     let updatedCount = 0;
                     let errorCount = 0;
-                    const positionRegex = /^PP\d{2}\.\d{2}\.\d{2}\.[AB]$/i;
+                    const positionRegex = /^PP(\d{2})\.(\d{2})\.(\d{2})\.([AB])$/i;
 
                     lines.forEach(line => {
                         if (!line.trim()) return;
@@ -626,20 +781,36 @@
                             const item = parts[1].trim().toUpperCase();
                             const quantity = parts[2].trim();
 
-                            if (positionRegex.test(position)) {
-                                if (item === '' && quantity === '') {
-                                    delete inventoryState[position];
-                                } else {
-                                    const productParam = PRODUCT_PARAMS_DATA.find(p => p.code.toUpperCase() === item.toUpperCase());
-                                    const maxQty = productParam ? parseFloat(productParam.maxQty) : 0;
-                                    let percentage = 100; // Default to 100% if no param is found
-                                    if(maxQty > 0) {
-                                        percentage = (parseFloat(quantity) / maxQty) * 100;
+                            const match = position.match(positionRegex);
+
+                            if (match) {
+                                const rackNumber = parseInt(match[1], 10);
+                                const col = parseInt(match[2], 10);
+                                const levelNum = match[3];
+
+                                const maxColsForRack = WAREHOUSE_CONFIG.getColsForRack(rackNumber);
+                                const validLevelNums = Object.values(WAREHOUSE_CONFIG.levelMap);
+
+                                // Validação rigorosa da posição
+                                if (rackNumber > 0 && rackNumber <= WAREHOUSE_CONFIG.totalRacks && col > 0 && col <= maxColsForRack && validLevelNums.includes(levelNum)) {
+                                    if (item === '' && quantity === '') {
+                                        delete inventoryState[position];
+                                    } else {
+                                        const productParam = PRODUCT_PARAMS_DATA.find(p => p.code.toUpperCase() === item.toUpperCase());
+                                        const maxQty = productParam ? parseFloat(productParam.maxQty) : 0;
+                                        let percentage = 100; // Default to 100% if no param is found
+                                        if(maxQty > 0) {
+                                            percentage = (parseFloat(quantity) / maxQty) * 100;
+                                        }
+                                        inventoryState[position] = { item, quantity, percentage };
                                     }
-                                    inventoryState[position] = { item, quantity, percentage };
+                                    updatedCount++;
+                                } else {
+                                    // Posição inválida (ex: coluna 20 em um rack de 16)
+                                    errorCount++;
                                 }
-                                updatedCount++;
                             } else {
+                                // Formato da posição não corresponde ao regex
                                 errorCount++;
                             }
                         } else if (line.trim()) {
@@ -890,7 +1061,7 @@
                 title.textContent = 'Programação de Chegadas';
                 header.appendChild(title);
 
-                 if (showConfirmation) {
+                if (showConfirmation) {
                     const confirmation = document.createElement('span');
                     confirmation.className = 'ml-4 text-lg font-normal text-green-400';
                     confirmation.textContent = 'Salvo com sucesso!';
@@ -1254,7 +1425,9 @@
                     const currentSimDay = new Date(today.getTime() + i * (1000 * 3600 * 24));
                     const currentSimDayString = currentSimDay.toISOString().split('T')[0];
                     
-                    if (currentSimDay > today) {
+                    // A simulação de consumo (saídas via forecast) só ocorre a partir do dia seguinte (i > 0).
+                    // Para o dia atual (i = 0), apenas as chegadas programadas são consideradas no cálculo.
+                    if (i > 0) {
                         const dailyConsumptionData = FORECAST_DATA[currentSimDayString] || {};
 
                         for(const productCode in dailyConsumptionData){
@@ -1380,4 +1553,9 @@
     </script>
 </body>
 </html>
+
+
+
+
+
 
