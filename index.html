@@ -75,12 +75,24 @@
         a[data-rack="programming"].active-menu-item { background-color: #BE185D; } /* pink-700 */
         a[data-rack="instructions"].active-menu-item { background-color: #4338CA; } /* indigo-700 */
         a[data-rack="all"].active-menu-item { background-color: #B45309; } /* amber-700 */
+        a[data-rack="organization"].active-menu-item { background-color: #0369a1; } /* sky-700 */
 
         .uppercase-input {
             text-transform: uppercase;
         }
         .uppercase-input::placeholder {
             text-transform: none;
+        }
+        .pallet-cell.search-highlight {
+            background-color: #10b981 !important;
+            box-shadow: 0 0 10px rgba(16, 185, 129, 0.8);
+            z-index: 15;
+        }
+        .pallet-cell.search-highlight:hover {
+            background-color: #059669 !important;
+        }
+        .pallet-cell.search-dimmed {
+            opacity: 0.12 !important;
         }
     </style>
 </head>
@@ -274,6 +286,7 @@
                     case 'params': displayProductParamsScreen(!!message, message); break;
                     case 'programming': displayProgrammingScreen(!!message, message); break;
                     case 'forecast': displayForecastScreen(!!message, message); break;
+                    case 'organization': displayOrganizationTaskScreen(); break;
                     case 'all': displayAllRacks(); break;
                     default: displaySingleRack(parseInt(currentRackId, 10)); break;
                 }
@@ -290,6 +303,7 @@
                     forecast: `<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>`,
                     programming: `<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>`,
                     instructions: `<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>`,
+                    organization: `<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>`,
                     all: `<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>`,
                     rack: `<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg>`
                 };
@@ -323,6 +337,7 @@
                 createMenuItem('forecast', 'Forecast', icons.forecast, 'bg-green-600 text-white hover:bg-green-500');
                 createMenuItem('programming', 'Programação', icons.programming, 'bg-pink-600 text-white hover:bg-pink-500');
                 createMenuItem('instructions', 'Instruções', icons.instructions, 'bg-indigo-600 text-white hover:bg-indigo-500');
+                createMenuItem('organization', 'Tarefa de Organização', icons.organization, 'bg-sky-600 text-white hover:bg-sky-500');
                 
                 const separator2 = document.createElement('hr');
                 separator2.className = "border-gray-700 my-4";
@@ -339,6 +354,187 @@
                 }
             }
             
+            function displayOrganizationTaskScreen() {
+                mainContent.innerHTML = '';
+
+                const header = document.createElement('h2');
+                header.className = 'text-2xl font-bold text-sky-400 mb-2';
+                header.textContent = 'Tarefa de Organiza\u00e7\u00e3o';
+                mainContent.appendChild(header);
+
+                const subtitle = document.createElement('p');
+                subtitle.className = 'text-gray-400 text-sm mb-6';
+                subtitle.textContent = 'Consolida\u00e7\u00e3o de posi\u00e7\u00f5es parciais: retira das menores e aloca nas maiores at\u00e9 completar a capacidade m\u00e1xima do pallet.';
+                mainContent.appendChild(subtitle);
+
+                if (PRODUCT_PARAMS_DATA.length === 0) {
+                    mainContent.innerHTML += '<p class="text-yellow-400 bg-gray-800 p-4 rounded-lg">Nenhum par\u00e2metro de produto cadastrado. Acesse <strong>Par\u00e2metros</strong> para informar a quantidade m\u00e1xima por posi\u00e7\u00e3o.</p>';
+                    return;
+                }
+
+                const allTasks = [];
+                let totalFreedPositions = 0;
+                let totalMoves = 0;
+
+                PRODUCT_PARAMS_DATA.forEach(param => {
+                    const code = param.code.toUpperCase();
+                    const maxQty = parseFloat(param.maxQty);
+                    if (!maxQty || maxQty <= 0) return;
+
+                    const partialPositions = Object.entries(inventoryState)
+                        .filter(([, data]) => data.item.toUpperCase() === code && parseFloat(data.quantity) > 0 && parseFloat(data.quantity) < maxQty)
+                        .map(([addr, data]) => ({ address: addr, qty: parseFloat(data.quantity) }))
+                        .sort((a, b) => b.qty - a.qty);
+
+                    if (partialPositions.length <= 1) return;
+
+                    // Capture original percentages BEFORE simulation
+                    const originalPct = {};
+                    partialPositions.forEach(p => {
+                        originalPct[p.address] = ((p.qty / maxQty) * 100).toFixed(1);
+                    });
+
+                    const sim = partialPositions.map(p => ({ ...p }));
+                    const moves = [];
+                    let left = 0;
+                    let right = sim.length - 1;
+
+                    while (left < right) {
+                        const receiver = sim[left];
+                        const donor = sim[right];
+                        const space = maxQty - receiver.qty;
+                        const available = donor.qty;
+
+                        if (space < 0.01) { left++; continue; }
+                        if (available < 0.01) { right--; continue; }
+
+                        const transfer = Math.min(space, available);
+                        moves.push({
+                            from: donor.address,
+                            to: receiver.address,
+                            qty: Math.round(transfer),
+                            fromPct: originalPct[donor.address],
+                            toPct: originalPct[receiver.address],
+                            spaceInReceiver: Math.round(space)
+                        });
+
+                        receiver.qty += transfer;
+                        donor.qty -= transfer;
+
+                        if (maxQty - receiver.qty < 0.01) left++;
+                        if (donor.qty < 0.01) right--;
+                    }
+
+                    // Group flat moves by donor for display (one trip per donor)
+                    const tripMap = new Map();
+                    moves.forEach(move => {
+                        if (!tripMap.has(move.from)) {
+                            tripMap.set(move.from, { from: move.from, fromPct: move.fromPct, totalQty: 0, destinations: [] });
+                        }
+                        const trip = tripMap.get(move.from);
+                        trip.totalQty += move.qty;
+                        trip.destinations.push({ to: move.to, qty: move.qty, toPct: move.toPct, space: move.spaceInReceiver });
+                    });
+                    const trips = Array.from(tripMap.values());
+
+                    const freedPositions = sim.filter(p => p.qty < 0.01).length;
+                    totalFreedPositions += freedPositions;
+                    totalMoves += trips.length;
+
+                    if (trips.length > 0) {
+                        allTasks.push({ code, maxQty, trips, freedPositions, partialPositions });
+                    }
+                });
+
+                if (allTasks.length === 0) {
+                    mainContent.innerHTML += '<p class="text-green-400 bg-gray-800 p-4 rounded-lg">\u2713 Nenhuma consolida\u00e7\u00e3o necess\u00e1ria.</p>';
+                    return;
+                }
+
+                // Summary banner
+                const summary = document.createElement('div');
+                summary.className = 'flex gap-6 mb-6 p-4 bg-gray-800 rounded-lg';
+                summary.innerHTML = `
+                    <div><span class="text-gray-400 text-sm">Produtos a consolidar</span><p class="text-2xl font-bold text-sky-400">${allTasks.length}</p></div>
+                    <div><span class="text-gray-400 text-sm">Viagens ao estoque</span><p class="text-2xl font-bold text-amber-400">${totalMoves}</p></div>
+                    <div><span class="text-gray-400 text-sm">Posi\u00e7\u00f5es a liberar</span><p class="text-2xl font-bold text-green-400">${totalFreedPositions}</p></div>
+                `;
+                mainContent.appendChild(summary);
+
+                allTasks.forEach(task => {
+                    const section = document.createElement('div');
+                    section.className = 'mb-8 bg-gray-800 rounded-lg overflow-hidden';
+
+                    const prodHeader = document.createElement('div');
+                    prodHeader.className = 'flex items-center justify-between px-5 py-3 bg-gray-700';
+                    prodHeader.innerHTML = `
+                        <div>
+                            <span class="text-lg font-bold text-sky-300">${task.code}</span>
+                            <span class="ml-3 text-sm text-gray-400">Capacidade m\u00e1xima por posi\u00e7\u00e3o: <strong class="text-white">${task.maxQty.toLocaleString('pt-BR')}</strong> un.</span>
+                        </div>
+                        <div class="flex gap-4 text-sm">
+                            <span class="text-gray-400">Posi\u00e7\u00f5es parciais: <strong class="text-yellow-400">${task.partialPositions.length}</strong></span>
+                            <span class="text-gray-400">Posi\u00e7\u00f5es a liberar: <strong class="text-green-400">${task.freedPositions}</strong></span>
+                            <span class="text-gray-400">Viagens: <strong class="text-amber-400">${task.trips.length}</strong></span>
+                        </div>
+                    `;
+                    section.appendChild(prodHeader);
+
+                    const moveList = document.createElement('div');
+                    moveList.className = 'divide-y divide-gray-700';
+
+                    task.trips.forEach((trip, i) => {
+                        const row = document.createElement('div');
+                        row.className = 'px-5 py-3 text-sm';
+                        const arrow = `<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-amber-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3"/></svg>`;
+
+                        if (trip.destinations.length === 1) {
+                            const dest = trip.destinations[0];
+                            row.className += ' flex items-center gap-3 flex-wrap';
+                            row.innerHTML = `
+                                <span class="text-gray-500 w-6 text-right flex-shrink-0">${i + 1}.</span>
+                                <span class="font-mono font-semibold text-red-400">${trip.from}</span>
+                                <span class="text-gray-500 text-xs">(${trip.fromPct}%)</span>
+                                ${arrow}
+                                <span class="text-gray-300">retirar <strong class="text-white">${trip.totalQty.toLocaleString('pt-BR')}</strong> un.</span>
+                                <span class="text-gray-500 text-xs">(espa\u00e7o dispon\u00edvel: ${dest.space} un.)</span>
+                                ${arrow}
+                                <span class="text-amber-300 font-semibold">ALOCAR</span>
+                                <span class="font-mono font-semibold text-green-400">${dest.to}</span>
+                                <span class="text-gray-500 text-xs">(${dest.toPct}%)</span>
+                            `;
+                        } else {
+                            row.innerHTML = `
+                                <div class="flex items-center gap-3 flex-wrap mb-2">
+                                    <span class="text-gray-500 w-6 text-right flex-shrink-0">${i + 1}.</span>
+                                    <span class="font-mono font-semibold text-red-400">${trip.from}</span>
+                                    <span class="text-gray-500 text-xs">(${trip.fromPct}%)</span>
+                                    ${arrow}
+                                    <span class="text-gray-300">retirar <strong class="text-white">${trip.totalQty.toLocaleString('pt-BR')}</strong> un. no total &rarr; distribuir em <strong class="text-amber-300">${trip.destinations.length}</strong> posi\u00e7\u00f5es:</span>
+                                </div>
+                                <div class="ml-10 space-y-1">
+                                    ${trip.destinations.map(dest => `
+                                        <div class="flex items-center gap-2 flex-wrap">
+                                            ${arrow}
+                                            <span class="text-amber-300 font-semibold">ALOCAR</span>
+                                            <span class="text-gray-300"><strong class="text-white">${dest.qty.toLocaleString('pt-BR')}</strong> un. em</span>
+                                            <span class="font-mono font-semibold text-green-400">${dest.to}</span>
+                                            <span class="text-gray-500 text-xs">(${dest.toPct}%)</span>
+                                            <span class="text-gray-500 text-xs">(espa\u00e7o dispon\u00edvel: ${dest.space} un.)</span>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            `;
+                        }
+
+                        moveList.appendChild(row);
+                    });
+
+                    section.appendChild(moveList);
+                    mainContent.appendChild(section);
+                });
+            }
+
             // --- NEW DASHBOARD FUNCTION ---
             function displayDashboard() {
                 mainContent.innerHTML = '';
@@ -350,7 +546,7 @@
 
                 // KPI Cards
                 const kpiContainer = document.createElement('div');
-                kpiContainer.className = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8';
+                kpiContainer.className = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-8';
                 
                 let grandTotalPositions = 0;
                 for (let i = 1; i <= WAREHOUSE_CONFIG.totalRacks; i++) {
@@ -363,6 +559,7 @@
 
                 const kpis = [
                     { title: 'Ocupação Global', value: `${globalPercentage}%`, color: 'text-amber-400' },
+                    { title: 'Posições Totais', value: grandTotalPositions.toLocaleString('pt-BR'), color: 'text-blue-400' },
                     { title: 'Posições Ocupadas', value: totalOccupied.toLocaleString('pt-BR'), color: 'text-red-400' },
                     { title: 'Total de Itens', value: Math.round(totalItems).toLocaleString('pt-BR'), color: 'text-cyan-400' },
                     { title: 'SKUs Distintos', value: distinctSKUs.toLocaleString('pt-BR'), color: 'text-green-400' },
@@ -443,32 +640,43 @@
                 movementsContainer.appendChild(departuresContent);
 
 
-                // Stock Analysis
+                // Stock Analysis — VAB (Vasos Sanitários)
                 const stockAnalysisContainer = document.createElement('div');
                 stockAnalysisContainer.className = 'bg-gray-800 p-6 rounded-lg shadow-lg';
                 stockAnalysisContainer.innerHTML = `<h3 class="text-xl font-semibold mb-4 text-white">Análise de Estoque</h3>`;
                 
-                const productQuantities = {};
+                const vabQuantities = {};
+                const vabPositionCount = {};
                 Object.values(inventoryState).forEach(pos => {
-                    if (pos.item !== 'OCUPADO MANUALMENTE') {
-                        productQuantities[pos.item] = (productQuantities[pos.item] || 0) + parseFloat(pos.quantity || 0);
+                    if (pos.item && pos.item.toUpperCase().startsWith('VAB')) {
+                        const code = pos.item;
+                        vabQuantities[code] = (vabQuantities[code] || 0) + parseFloat(pos.quantity || 0);
+                        vabPositionCount[code] = (vabPositionCount[code] || 0) + 1;
                     }
                 });
 
-                const topProducts = Object.entries(productQuantities).sort((a,b) => b[1] - a[1]).slice(0,5);
+                const vabRanking = Object.entries(vabQuantities).sort((a,b) => b[1] - a[1]);
                 
-                stockAnalysisContainer.innerHTML += `<h4 class="font-bold text-purple-400 mb-2">Top 5 Produtos em Estoque</h4>`;
-                if(topProducts.length > 0){
+                stockAnalysisContainer.innerHTML += `<h4 class="font-bold text-purple-400 mb-2">Ranking — Vasos Sanitários (VAB)</h4>`;
+                if(vabRanking.length > 0){
                     const table = document.createElement('table');
                     table.className = 'w-full text-sm text-left';
-                    table.innerHTML = `<thead class="text-xs text-gray-400 uppercase"><tr><th class="py-2">Produto</th><th class="py-2 text-right">Quantidade Total</th></tr></thead><tbody>`;
-                    topProducts.forEach(([code, qty]) => {
-                        table.innerHTML += `<tr class="border-b border-gray-700"><td class="py-2">${code}</td><td class="py-2 text-right">${Math.round(qty).toLocaleString('pt-BR')}</td></tr>`;
+                    table.innerHTML = `<thead class="text-xs text-gray-400 uppercase"><tr><th class="py-2">#</th><th class="py-2">Produto</th><th class="py-2 text-right">Quantidade Total</th><th class="py-2 text-right">Posições Ocupadas</th><th class="py-2 text-right">% Ocupação</th></tr></thead><tbody>`;
+                    vabRanking.forEach(([code, qty], index) => {
+                        const posOcupadas = vabPositionCount[code] || 0;
+                        const pct = grandTotalPositions > 0 ? ((posOcupadas / grandTotalPositions) * 100).toFixed(2) : '0.00';
+                        table.innerHTML += `<tr class="border-b border-gray-700">
+                            <td class="py-2 text-gray-500">${index + 1}</td>
+                            <td class="py-2">${code}</td>
+                            <td class="py-2 text-right">${Math.round(qty).toLocaleString('pt-BR')}</td>
+                            <td class="py-2 text-right text-white">${posOcupadas.toLocaleString('pt-BR')}</td>
+                            <td class="py-2 text-right font-semibold text-cyan-400">${pct}%</td>
+                        </tr>`;
                     });
                     table.innerHTML += `</tbody>`;
                     stockAnalysisContainer.appendChild(table);
                 } else {
-                    stockAnalysisContainer.innerHTML += `<p class="text-sm text-gray-400">Nenhum produto em estoque.</p>`;
+                    stockAnalysisContainer.innerHTML += `<p class="text-sm text-gray-400">Nenhum produto VAB em estoque.</p>`;
                 }
 
                 analysisContainer.appendChild(movementsContainer);
@@ -587,7 +795,7 @@
                 mainContent.innerHTML = '';
                 
                 const simulationHeader = document.createElement('div');
-                simulationHeader.className = 'flex justify-center items-center gap-4 mb-8 p-4 bg-gray-800 rounded-lg';
+                simulationHeader.className = 'flex flex-wrap justify-center items-center gap-4 mb-8 p-4 bg-gray-800 rounded-lg';
                 simulationHeader.innerHTML = `
                     <div>
                         <label for="simulation-date" class="mr-2 font-semibold">Simular para o dia:</label>
@@ -596,6 +804,13 @@
                     <button id="run-simulation-btn" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-md font-semibold">Simular Dia</button>
                     <button id="clear-simulation-btn" class="px-4 py-2 bg-gray-600 hover:bg-gray-500 rounded-md font-semibold">Limpar Simulação</button>
                     <p id="simulation-status" class="text-sm text-gray-400 h-6 ml-4"></p>
+                    <div class="border-l border-gray-600 pl-4 ml-2 flex items-center gap-2">
+                        <label for="product-search" class="font-semibold text-cyan-300">Pesquisar por Código:</label>
+                        <input type="text" id="product-search" class="uppercase-input bg-gray-700 text-white rounded-md p-2 w-40" placeholder="Ex: PROD-001">
+                        <button id="search-product-btn" class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 rounded-md font-semibold">Pesquisar</button>
+                        <button id="clear-search-btn" class="px-4 py-2 bg-gray-600 hover:bg-gray-500 rounded-md font-semibold hidden">Limpar</button>
+                        <p id="search-status" class="text-sm text-cyan-400 min-w-max"></p>
+                    </div>
                 `;
                 mainContent.appendChild(simulationHeader);
 
@@ -624,6 +839,23 @@
                 document.getElementById('clear-simulation-btn').onclick = () => {
                     displayAllRacks(inventoryState);
                     updateGlobalStats(inventoryState);
+                };
+
+                document.getElementById('search-product-btn').onclick = () => {
+                    const searchCode = document.getElementById('product-search').value.trim().toUpperCase();
+                    if (searchCode) applyProductSearch(searchCode, sourceInventory);
+                };
+
+                document.getElementById('product-search').addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') {
+                        const searchCode = e.target.value.trim().toUpperCase();
+                        if (searchCode) applyProductSearch(searchCode, sourceInventory);
+                    }
+                });
+
+                document.getElementById('clear-search-btn').onclick = () => {
+                    document.getElementById('product-search').value = '';
+                    clearProductSearch();
                 };
 
                 for (let i = 1; i <= WAREHOUSE_CONFIG.totalRacks; i++) {
@@ -1404,6 +1636,44 @@
                 });
             }
             
+            function applyProductSearch(searchCode, sourceInventory) {
+                const allCells = mainContent.querySelectorAll('.pallet-cell');
+                let matchCount = 0;
+
+                allCells.forEach(cell => {
+                    const address = cell.dataset.address;
+                    const data = sourceInventory[address];
+                    if (data && data.item.toUpperCase().includes(searchCode)) {
+                        cell.classList.add('search-highlight');
+                        cell.classList.remove('search-dimmed');
+                        matchCount++;
+                    } else {
+                        cell.classList.add('search-dimmed');
+                        cell.classList.remove('search-highlight');
+                    }
+                });
+
+                const searchStatus = document.getElementById('search-status');
+                if (searchStatus) {
+                    searchStatus.textContent = matchCount > 0
+                        ? `${matchCount} loca\u00e7\u00e3o(ões) encontrada(s)`
+                        : 'Nenhuma loca\u00e7\u00e3o encontrada';
+                }
+
+                const clearBtn = document.getElementById('clear-search-btn');
+                if (clearBtn) clearBtn.classList.remove('hidden');
+            }
+
+            function clearProductSearch() {
+                mainContent.querySelectorAll('.pallet-cell').forEach(cell => {
+                    cell.classList.remove('search-highlight', 'search-dimmed');
+                });
+                const searchStatus = document.getElementById('search-status');
+                if (searchStatus) searchStatus.textContent = '';
+                const clearBtn = document.getElementById('clear-search-btn');
+                if (clearBtn) clearBtn.classList.add('hidden');
+            }
+
             function runSimulation(simulationDate) {
                 let simulatedInventory = JSON.parse(JSON.stringify(inventoryState));
                 
