@@ -338,7 +338,7 @@
                 createMenuItem('programming', 'Programação', icons.programming, 'bg-pink-600 text-white hover:bg-pink-500');
                 createMenuItem('instructions', 'Instruções', icons.instructions, 'bg-indigo-600 text-white hover:bg-indigo-500');
                 createMenuItem('organization', 'Tarefa de Organização', icons.organization, 'bg-sky-600 text-white hover:bg-sky-500');
-                
+
                 const separator2 = document.createElement('hr');
                 separator2.className = "border-gray-700 my-4";
                 rackSelector.appendChild(separator2);
@@ -687,9 +687,44 @@
 
             function createRackGridElement(rackNumber, sourceInventory = inventoryState) {
                 const cols = WAREHOUSE_CONFIG.getColsForRack(rackNumber);
+                const CELL = 72;
+                const GAP  = 6;
+                const LABEL = 28;
+
+                // Outer wrapper
+                const wrapper = document.createElement('div');
+                wrapper.style.display = 'inline-block';
+
+                // ── Column numbers header ──
+                const colHeader = document.createElement('div');
+                colHeader.style.cssText = `display:flex;gap:${GAP}px;margin-left:${LABEL + GAP}px;margin-bottom:4px;`;
+                for (let col = 1; col <= cols; col++) {
+                    const n = document.createElement('div');
+                    n.style.cssText = `width:${CELL}px;text-align:center;font-size:10px;color:#4b5563;flex-shrink:0;`;
+                    n.textContent = String(col).padStart(2, '0');
+                    colHeader.appendChild(n);
+                }
+                wrapper.appendChild(colHeader);
+
+                // ── Body: level labels + cell grid ──
+                const body = document.createElement('div');
+                body.style.cssText = `display:flex;gap:${GAP}px;`;
+
+                // Level label column (F → A, top to bottom)
+                const labelCol = document.createElement('div');
+                labelCol.style.cssText = `display:flex;flex-direction:column;gap:${GAP}px;width:${LABEL}px;flex-shrink:0;`;
+                WAREHOUSE_CONFIG.levelLetters.forEach(letter => {
+                    const lbl = document.createElement('div');
+                    lbl.style.cssText = `height:${CELL}px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#6b7280;`;
+                    lbl.textContent = letter;
+                    labelCol.appendChild(lbl);
+                });
+                body.appendChild(labelCol);
+
+                // Cell grid
                 const grid = document.createElement('div');
                 grid.className = 'grid gap-1.5';
-                grid.style.gridTemplateColumns = `repeat(${cols}, 72px)`; // Aumentado para garantir espaço para o texto
+                grid.style.gridTemplateColumns = `repeat(${cols}, ${CELL}px)`;
 
                 WAREHOUSE_CONFIG.levelLetters.forEach(levelLetter => {
                     for (let col = 1; col <= cols; col++) {
@@ -701,19 +736,16 @@
                             const cell = document.createElement('div');
                             const address = `PP${String(rackNumber).padStart(2, '0')}.${String(col).padStart(2, '0')}.${levelNum}.${side}`;
                             cell.dataset.address = address;
-                            
-                            // Alterado de flex-1 para w-1/2 para forçar tamanho igual e impedir que o conteúdo redimensione a célula
+
                             let cellClasses = 'pallet-cell w-1/2 h-full bg-gray-700 cursor-pointer flex items-center justify-center';
-                            if (index === 0) {
-                                cellClasses += ' border-r border-black';
-                            }
+                            if (index === 0) cellClasses += ' border-r border-black';
                             cell.className = cellClasses;
 
                             const data = sourceInventory[address];
                             if (data) {
                                 cell.title = `${address}\nProduto: ${data.item}\nQtd: ${data.quantity}`;
                                 if (data.percentage !== undefined && !isNaN(data.percentage)) {
-                                     if (data.percentage > 100) {
+                                    if (data.percentage > 100) {
                                         cell.classList.add('over-capacity');
                                     } else if (data.percentage < 99.9) {
                                         cell.classList.add('partial-fill');
@@ -739,7 +771,10 @@
                         grid.appendChild(positionContainer);
                     }
                 });
-                return grid;
+
+                body.appendChild(grid);
+                wrapper.appendChild(body);
+                return wrapper;
             }
             
             function updateRackStats(rackNumber, sourceInventory = inventoryState) {
@@ -1794,6 +1829,7 @@
                 updateGlobalStats(simulatedInventory);
             }
             
+
             // --- INITIAL APP STARTUP ---
             async function initialize() {
                 onAuthStateChanged(auth, async (user) => {
