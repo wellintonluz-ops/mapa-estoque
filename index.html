@@ -124,7 +124,7 @@
     <!-- Firebase SDKs - Updated to v11.6.1 -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getFirestore, doc, setDoc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, getDoc, onSnapshot, collection } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 
         document.addEventListener('DOMContentLoaded', () => {
@@ -151,6 +151,21 @@
             const app = initializeApp(firebaseConfig);
             const db = getFirestore(app);
             const auth = getAuth(app);
+
+            // Projeto exclusivo de capacidade de ocupação por pallet (coleção pallet_padrao: code + qty)
+            const palletCapacityConfig = {
+                apiKey: "AIzaSyCPCOAyn-SuhpDdTyFY4sZQ0Iv7GCQrLVM",
+                authDomain: "ocupacao-de-pallet.firebaseapp.com",
+                projectId: "ocupacao-de-pallet",
+                storageBucket: "ocupacao-de-pallet.firebasestorage.app",
+                messagingSenderId: "259468491054",
+                appId: "1:259468491054:web:4945dd23626b465874a2bf",
+                measurementId: "G-N1DT3R3LS0"
+            };
+            const palletApp = initializeApp(palletCapacityConfig, "ocupacao-de-pallet");
+            const palletDb = getFirestore(palletApp);
+            const palletAuth = getAuth(palletApp);
+
             let userId = null;
             let isInitialLoad = true;
             let activeRackId = 'dashboard'; // Start with the new dashboard
@@ -215,7 +230,6 @@
                     await setDoc(publicDocRef, {
                         inventoryState: JSON.stringify(inventoryState),
                         INSTRUCTIONS_DATA,
-                        PRODUCT_PARAMS_DATA,
                         PROGRAMMING_DATA,
                         FORECAST_DATA: JSON.stringify(FORECAST_DATA)
                     });
@@ -247,13 +261,12 @@
                             console.error("Error parsing FORECAST_DATA from Firestore:", e);
                             FORECAST_DATA = {};
                         }
-                        PRODUCT_PARAMS_DATA = data.PRODUCT_PARAMS_DATA || [];
                         PROGRAMMING_DATA = data.PROGRAMMING_DATA || [];
+                        applyParamsToInventory();
                     } else {
                         console.log("No data found, creating new public document.");
                         INSTRUCTIONS_DATA = DEFAULT_INSTRUCTIONS;
                         inventoryState = {};
-                        PRODUCT_PARAMS_DATA = [];
                         PROGRAMMING_DATA = [];
                         FORECAST_DATA = {};
                         saveData(); // Create the initial document
@@ -271,6 +284,42 @@
                     } else {
                         refreshCurrentView();
                     }
+                });
+            }
+
+            // Recalcula o percentual de ocupação de todas as posições com base nos
+            // parâmetros vindos do projeto "ocupacao-de-pallet". Itens sem parâmetro ficam em 100%.
+            function applyParamsToInventory() {
+                Object.keys(inventoryState).forEach(address => {
+                    const stockItem = inventoryState[address];
+                    if (stockItem && stockItem.item !== 'OCUPADO MANUALMENTE') {
+                        const productParam = PRODUCT_PARAMS_DATA.find(p => p.code.toUpperCase() === String(stockItem.item).toUpperCase());
+                        if (productParam) {
+                            const maxQty = parseFloat(productParam.maxQty);
+                            stockItem.percentage = maxQty > 0 ? (parseFloat(stockItem.quantity) / maxQty) * 100 : 100;
+                        } else {
+                            stockItem.percentage = 100;
+                        }
+                    }
+                });
+            }
+
+            // Escuta em tempo real a coleção pallet_padrao do projeto exclusivo de
+            // capacidade de ocupação. Cada documento traz { code, qty } → { code, maxQty }.
+            function setupPalletCapacityListener() {
+                onSnapshot(collection(palletDb, "pallet_padrao"), (snapshot) => {
+                    PRODUCT_PARAMS_DATA = snapshot.docs
+                        .map(d => {
+                            const data = d.data();
+                            return { code: String(data.code || '').trim().toUpperCase(), maxQty: data.qty };
+                        })
+                        .filter(p => p.code && parseFloat(p.maxQty) > 0);
+                    applyParamsToInventory();
+                    if (!isInitialLoad) {
+                        refreshCurrentView();
+                    }
+                }, (error) => {
+                    console.error("Erro ao ler capacidades do projeto ocupacao-de-pallet:", error);
                 });
             }
 
@@ -368,7 +417,7 @@
                 mainContent.appendChild(subtitle);
 
                 if (PRODUCT_PARAMS_DATA.length === 0) {
-                    mainContent.innerHTML += '<p class="text-yellow-400 bg-gray-800 p-4 rounded-lg">Nenhum par\u00e2metro de produto cadastrado. Acesse <strong>Par\u00e2metros</strong> para informar a quantidade m\u00e1xima por posi\u00e7\u00e3o.</p>';
+                    mainContent.innerHTML += '<p class="text-yellow-400 bg-gray-800 p-4 rounded-lg">Nenhuma capacidade recebida do projeto de <strong>Ocupa\u00e7\u00e3o de Pallet</strong> at\u00e9 o momento. Cadastre os pallets l\u00e1 ou verifique a conex\u00e3o.</p>';
                     return;
                 }
 
@@ -1099,161 +1148,61 @@
                 });
             }
             
-            function displayProductParamsScreen(showConfirmation = false, confirmationMessage = 'Parâmetros salvos! Mapa de estoque e tarefas de organização atualizados.') {
+            function displayProductParamsScreen() {
                 mainContent.innerHTML = '';
 
                 const header = document.createElement('div');
-                header.className = 'flex justify-between items-center mb-6';
+                header.className = 'flex justify-between items-center mb-2';
 
                 const title = document.createElement('h2');
                 title.className = 'text-2xl font-bold text-amber-400';
-                title.textContent = 'Cadastro de Produtos';
+                title.textContent = 'Parâmetros de Produtos';
                 header.appendChild(title);
-
-                if (showConfirmation) {
-                    const confirmation = document.createElement('span');
-                    confirmation.className = 'ml-4 text-sm font-normal text-green-400';
-                    confirmation.textContent = confirmationMessage;
-                    title.appendChild(confirmation);
-                    setTimeout(() => {
-                        confirmation.remove();
-                    }, 3000);
-                }
-                
-                const buttonsContainer = document.createElement('div');
-                buttonsContainer.className = 'flex items-center gap-4';
-
-                const importLabel = document.createElement('label');
-                importLabel.htmlFor = 'params-file-upload';
-                importLabel.className = 'cursor-pointer px-4 py-2 bg-gray-600 hover:bg-gray-500 rounded-md font-semibold transition-colors duration-150';
-                importLabel.textContent = 'Carregar Lote (.csv, .xlsx)';
-                buttonsContainer.appendChild(importLabel);
-                
-                const fileInput = document.createElement('input');
-                fileInput.id = 'params-file-upload';
-                fileInput.type = 'file';
-                fileInput.className = 'hidden';
-                fileInput.accept = '.csv,.txt,.xls,.xlsx';
-                buttonsContainer.appendChild(fileInput);
-
-                const addButton = document.createElement('button');
-                addButton.textContent = 'Adicionar Novo Produto';
-                addButton.className = 'px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-md font-semibold transition-colors duration-150';
-                buttonsContainer.appendChild(addButton);
-
-                header.appendChild(buttonsContainer);
                 mainContent.appendChild(header);
+
+                const info = document.createElement('p');
+                info.className = 'text-gray-400 text-sm mb-6';
+                info.innerHTML = 'Dados sincronizados automaticamente em tempo real do projeto <strong class="text-purple-400">Ocupação de Pallet</strong>. Para alterar o código ou a capacidade total por pallet, edite diretamente no sistema de ocupação de pallet.';
+                mainContent.appendChild(info);
+
+                if (PRODUCT_PARAMS_DATA.length === 0) {
+                    const warning = document.createElement('p');
+                    warning.className = 'text-yellow-400 bg-gray-800 p-4 rounded-lg';
+                    warning.textContent = 'Nenhuma capacidade recebida do projeto de ocupação de pallet até o momento. Verifique a conexão e as permissões de leitura.';
+                    mainContent.appendChild(warning);
+                    return;
+                }
+
+                const summary = document.createElement('p');
+                summary.className = 'text-sm text-gray-400 mb-4';
+                summary.innerHTML = `<strong class="text-white">${PRODUCT_PARAMS_DATA.length}</strong> produto(s) sincronizado(s).`;
+                mainContent.appendChild(summary);
 
                 const container = document.createElement('div');
                 container.id = 'params-container';
-                container.className = 'space-y-4';
+                container.className = 'space-y-2';
 
                 const tableHeader = document.createElement('div');
                 tableHeader.className = 'grid grid-cols-12 gap-4 px-4 text-sm font-bold text-gray-400 uppercase';
                 tableHeader.innerHTML = `
                     <div class="col-span-9">Código do Produto</div>
-                    <div class="col-span-2 text-center">Qtd. Máxima na Locação</div>
-                    <div class="col-span-1"></div>
+                    <div class="col-span-3 text-center">Capacidade Total por Pallet</div>
                 `;
                 container.appendChild(tableHeader);
 
-                const createParamBlock = (item, parent) => {
-                    const paramBlock = document.createElement('div');
-                    paramBlock.className = 'param-block bg-gray-800 p-3 rounded-lg grid grid-cols-12 gap-4 items-center';
-                    
-                    paramBlock.innerHTML = `
-                        <input type="text" value="${item.code || ''}" placeholder="Ex: PROD-001" class="uppercase-input param-code col-span-9 bg-gray-700 text-white p-2 rounded-md border border-gray-600 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition">
-                        <input type="number" value="${item.maxQty || ''}" placeholder="Ex: 100" class="param-max-qty col-span-2 bg-gray-700 text-white p-2 rounded-md border border-gray-600 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition text-center">
-                        <button class="remove-btn col-span-1 px-3 py-2 bg-red-700 hover:bg-red-600 rounded-md text-sm font-medium transition-colors duration-150">Remover</button>
-                    `;
-                    
-                    paramBlock.querySelector('.remove-btn').onclick = () => paramBlock.remove();
-                    parent.appendChild(paramBlock);
-                };
-                
-                addButton.onclick = () => createParamBlock({}, container);
-
-                PRODUCT_PARAMS_DATA.forEach(item => createParamBlock(item, container));
-                
-                fileInput.addEventListener('change', (event) => {
-                    processUploadedFile(event.target.files[0], (data) => {
-                         data.forEach(row => {
-                            if (String(row[0]).toLowerCase().includes('código')) return; 
-                            if (row.length >= 2) {
-                                createParamBlock({ code: row[0], maxQty: row[1] }, container);
-                            }
-                        });
-                        fileInput.value = '';
-                    });
-                });
-
-                const actionButtons = document.createElement('div');
-                actionButtons.className = 'mt-6 flex items-center gap-4';
-
-                const saveButton = document.createElement('button');
-                saveButton.textContent = 'Salvar Alterações';
-                saveButton.className = 'px-4 py-2 bg-green-600 hover:bg-green-500 rounded-md font-semibold transition-colors duration-150';
-                saveButton.onclick = () => {
-                    const newParamsData = [];
-                    mainContent.querySelectorAll('#params-container .param-block').forEach(block => {
-                        const code = block.querySelector('.param-code').value.trim().toUpperCase();
-                        const maxQty = block.querySelector('.param-max-qty').value.trim();
-                        if (code || maxQty) {
-                            newParamsData.push({ code, maxQty });
-                        }
-                    });
-                    
-                    PRODUCT_PARAMS_DATA = newParamsData;
-
-                    // Recalcula percentual de TODOS os itens do inventário com base nos novos parâmetros.
-                    // Itens sem parâmetro cadastrado voltam para 100% (sem limite definido).
-                    Object.keys(inventoryState).forEach(address => {
-                        const stockItem = inventoryState[address];
-                        if (stockItem && stockItem.item !== 'OCUPADO MANUALMENTE') {
-                            const productParam = newParamsData.find(p => p.code.toUpperCase() === stockItem.item.toUpperCase());
-                            if (productParam) {
-                                const maxQty = parseFloat(productParam.maxQty);
-                                stockItem.percentage = maxQty > 0 ? (parseFloat(stockItem.quantity) / maxQty) * 100 : 100;
-                            } else {
-                                stockItem.percentage = 100;
-                            }
-                        }
+                [...PRODUCT_PARAMS_DATA]
+                    .sort((a, b) => a.code.localeCompare(b.code))
+                    .forEach(item => {
+                        const row = document.createElement('div');
+                        row.className = 'bg-gray-800 p-3 rounded-lg grid grid-cols-12 gap-4 items-center';
+                        row.innerHTML = `
+                            <div class="col-span-9 font-mono text-white">${item.code}</div>
+                            <div class="col-span-3 text-center text-cyan-400 font-semibold">${parseFloat(item.maxQty).toLocaleString('pt-BR')}</div>
+                        `;
+                        container.appendChild(row);
                     });
 
-                    saveData();
-                    nextRenderMessage = 'Parâmetros salvos! Mapa de estoque e tarefas de organização atualizados.';
-                    refreshCurrentView();
-                };
-
-                const deleteAllButton = document.createElement('button');
-                deleteAllButton.textContent = 'Excluir Todos';
-                deleteAllButton.className = 'px-4 py-2 bg-red-700 hover:bg-red-600 rounded-md font-semibold transition-colors duration-150';
-                deleteAllButton.onclick = () => {
-                    if(deleteAllButton.dataset.confirm) {
-                        PRODUCT_PARAMS_DATA = [];
-                        saveData();
-                        displayProductParamsScreen(true, "Todos os parâmetros foram excluídos.");
-                    } else {
-                        deleteAllButton.dataset.confirm = true;
-                        deleteAllButton.textContent = "Confirmar Exclusão?";
-                        deleteAllButton.classList.remove('bg-red-700', 'hover:bg-red-600');
-                        deleteAllButton.classList.add('bg-yellow-500', 'hover:bg-yellow-400', 'text-black');
-                        setTimeout(() => {
-                           if(deleteAllButton.dataset.confirm){
-                                delete deleteAllButton.dataset.confirm;
-                                deleteAllButton.textContent = 'Excluir Todos';
-                                deleteAllButton.classList.remove('bg-yellow-500', 'hover:bg-yellow-400', 'text-black');
-                                deleteAllButton.classList.add('bg-red-700', 'hover:bg-red-600');
-                           }
-                        }, 3000);
-                    }
-                };
-
-                actionButtons.appendChild(saveButton);
-                actionButtons.appendChild(deleteAllButton);
-                
                 mainContent.appendChild(container);
-                mainContent.appendChild(actionButtons);
             }
 
             function handleCellToggle(cell, rackNumber) {
@@ -1833,6 +1782,13 @@
 
             // --- INITIAL APP STARTUP ---
             async function initialize() {
+                // Conecta ao projeto de capacidade de ocupação. Tenta login anônimo;
+                // se ele estiver desabilitado lá, a leitura ainda funciona caso as
+                // regras do Firestore permitam leitura pública da coleção pallet_padrao.
+                signInAnonymously(palletAuth)
+                    .catch(err => console.warn("Login anônimo no projeto ocupacao-de-pallet indisponível, tentando leitura direta.", err))
+                    .finally(() => setupPalletCapacityListener());
+
                 onAuthStateChanged(auth, async (user) => {
                     if (user) {
                         userId = user.uid; // Capture the user ID
