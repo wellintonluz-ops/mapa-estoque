@@ -1099,12 +1099,12 @@
                 });
             }
             
-            function displayProductParamsScreen(showConfirmation = false) {
+            function displayProductParamsScreen(showConfirmation = false, confirmationMessage = 'Parâmetros salvos! Mapa de estoque e tarefas de organização atualizados.') {
                 mainContent.innerHTML = '';
-                
+
                 const header = document.createElement('div');
                 header.className = 'flex justify-between items-center mb-6';
-                
+
                 const title = document.createElement('h2');
                 title.className = 'text-2xl font-bold text-amber-400';
                 title.textContent = 'Cadastro de Produtos';
@@ -1112,12 +1112,12 @@
 
                 if (showConfirmation) {
                     const confirmation = document.createElement('span');
-                    confirmation.className = 'ml-4 text-lg font-normal text-green-400';
-                    confirmation.textContent = 'Salvo com sucesso!';
+                    confirmation.className = 'ml-4 text-sm font-normal text-green-400';
+                    confirmation.textContent = confirmationMessage;
                     title.appendChild(confirmation);
                     setTimeout(() => {
                         confirmation.remove();
-                    }, 2500);
+                    }, 3000);
                 }
                 
                 const buttonsContainer = document.createElement('div');
@@ -1205,23 +1205,24 @@
                     
                     PRODUCT_PARAMS_DATA = newParamsData;
 
+                    // Recalcula percentual de TODOS os itens do inventário com base nos novos parâmetros.
+                    // Itens sem parâmetro cadastrado voltam para 100% (sem limite definido).
                     Object.keys(inventoryState).forEach(address => {
                         const stockItem = inventoryState[address];
                         if (stockItem && stockItem.item !== 'OCUPADO MANUALMENTE') {
                             const productParam = newParamsData.find(p => p.code.toUpperCase() === stockItem.item.toUpperCase());
                             if (productParam) {
                                 const maxQty = parseFloat(productParam.maxQty);
-                                if (maxQty > 0) {
-                                    stockItem.percentage = (parseFloat(stockItem.quantity) / maxQty) * 100;
-                                } else {
-                                    stockItem.percentage = 100; 
-                                }
+                                stockItem.percentage = maxQty > 0 ? (parseFloat(stockItem.quantity) / maxQty) * 100 : 100;
+                            } else {
+                                stockItem.percentage = 100;
                             }
                         }
                     });
 
                     saveData();
-                    displayProductParamsScreen(true);
+                    nextRenderMessage = 'Parâmetros salvos! Mapa de estoque e tarefas de organização atualizados.';
+                    refreshCurrentView();
                 };
 
                 const deleteAllButton = document.createElement('button');
