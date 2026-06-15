@@ -125,7 +125,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getFirestore, doc, setDoc, getDoc, onSnapshot, collection } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken, GoogleAuthProvider, signInWithPopup } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 
         document.addEventListener('DOMContentLoaded', () => {
             const rackSelector = document.getElementById('rack-selector');
@@ -167,6 +167,7 @@
             const palletAuth = getAuth(palletApp);
 
             let userId = null;
+            let palletListenerSetup = false;
             let isInitialLoad = true;
             let activeRackId = 'dashboard'; // Start with the new dashboard
             let nextRenderMessage = null;
@@ -1782,12 +1783,18 @@
 
             // --- INITIAL APP STARTUP ---
             async function initialize() {
-                // Conecta ao projeto de capacidade de ocupação. Tenta login anônimo;
-                // se ele estiver desabilitado lá, a leitura ainda funciona caso as
-                // regras do Firestore permitam leitura pública da coleção pallet_padrao.
-                signInAnonymously(palletAuth)
-                    .catch(err => console.warn("Login anônimo no projeto ocupacao-de-pallet indisponível, tentando leitura direta.", err))
-                    .finally(() => setupPalletCapacityListener());
+                // Conecta ao projeto ocupacao-de-pallet usando conta Google @grupotbx.com.br.
+                // Reutiliza sessão existente; só abre popup se não houver usuário autenticado.
+                onAuthStateChanged(palletAuth, (palletUser) => {
+                    if (palletUser && !palletListenerSetup) {
+                        palletListenerSetup = true;
+                        setupPalletCapacityListener();
+                    } else if (!palletUser) {
+                        const provider = new GoogleAuthProvider();
+                        signInWithPopup(palletAuth, provider)
+                            .catch(err => console.error("Erro ao autenticar no projeto ocupacao-de-pallet:", err));
+                    }
+                });
 
                 onAuthStateChanged(auth, async (user) => {
                     if (user) {
