@@ -1783,18 +1783,8 @@
 
             // --- INITIAL APP STARTUP ---
             async function initialize() {
-                // Conecta ao projeto ocupacao-de-pallet usando conta Google @grupotbx.com.br.
-                // Reutiliza sessão existente; só abre popup se não houver usuário autenticado.
-                onAuthStateChanged(palletAuth, (palletUser) => {
-                    if (palletUser && !palletListenerSetup) {
-                        palletListenerSetup = true;
-                        setupPalletCapacityListener();
-                    } else if (!palletUser) {
-                        const provider = new GoogleAuthProvider();
-                        signInWithPopup(palletAuth, provider)
-                            .catch(err => console.error("Erro ao autenticar no projeto ocupacao-de-pallet:", err));
-                    }
-                });
+                // Leitura pública habilitada nas regras do projeto ocupacao-de-pallet.
+                setupPalletCapacityListener();
 
                 onAuthStateChanged(auth, async (user) => {
                     if (user) {
