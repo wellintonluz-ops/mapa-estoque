@@ -844,14 +844,28 @@
                 try {
                     const q = query(collection(db, 'ocupacaoHistorico'), orderBy('ts'));
                     const snap = await getDocs(q);
-                    if (!snap.empty) {
-                        todosOsDadosHist = snap.docs.map(d => d.data());
-                    } else {
+                    let firestoreDados = snap.empty ? [] : snap.docs.map(d => d.data());
+
+                    // Mescla SEED: adiciona entradas do SEED que não existem no Firestore (por data)
+                    const datasFirestore = new Set(firestoreDados.map(d => d.ts.substring(0, 10)));
+                    const seedFaltantes = SEED_OCUPACAO.filter(s => !datasFirestore.has(s.ts.substring(0, 10)));
+
+                    if (firestoreDados.length === 0) {
+                        // Sem dados no Firestore: tenta semear
                         for (const entry of SEED_OCUPACAO) {
                             const id = entry.ts.replace(/[: ]/g, '-');
-                            await setDoc(doc(db, 'ocupacaoHistorico', id), entry);
+                            try { await setDoc(doc(db, 'ocupacaoHistorico', id), entry); } catch(_) {}
                         }
                         todosOsDadosHist = [...SEED_OCUPACAO];
+                    } else {
+                        // Tenta salvar entradas do SEED que faltam no Firestore
+                        for (const entry of seedFaltantes) {
+                            const id = entry.ts.replace(/[: ]/g, '-');
+                            try { await setDoc(doc(db, 'ocupacaoHistorico', id), entry); } catch(_) {}
+                        }
+                        // Mescla localmente para exibição (mesmo que escrita falhe por permissões)
+                        todosOsDadosHist = [...firestoreDados, ...seedFaltantes]
+                            .sort((a, b) => a.ts.localeCompare(b.ts));
                     }
                 } catch(e) {
                     console.warn('Histórico de ocupação:', e);
@@ -2116,6 +2130,9 @@
                             }
                         }
                         
+                        const partialPallets = allLocations
+                            .filter(addr => 
+                                simulatedInventory[addr] &&
                         const partialPallets = allLocations
                             .filter(addr => 
                                 simulatedInventory[addr] &&
