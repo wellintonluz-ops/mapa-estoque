@@ -1944,4 +1944,219 @@
                 sortedDates.forEach(date => {
                     const dateObj = new Date(date + 'T00:00:00');
                     const formattedDate = isNaN(dateObj) ? 'Data Inválida' : dateObj.toLocaleDateString('pt-BR');
-                    tableHTML += `<th class="p
+                    tableHTML += `<th class="p-2 text-center">${formattedDate}</th>`;
+                });
+                tableHTML += '<th></th></tr></thead>';
+                
+                tableHTML += '<tbody>';
+                Object.keys(productForecasts).sort().forEach(productCode => {
+                    tableHTML += `<tr class="forecast-row border-b border-gray-700">`;
+                    tableHTML += `<td class="p-2 font-semibold forecast-code sticky left-0 bg-gray-900">${productCode}</td>`;
+                    sortedDates.forEach(date => {
+                        const qty = productForecasts[productCode][date] || 0;
+                        tableHTML += `<td class="p-1"><input type="number" class="w-24 bg-gray-700 text-center rounded p-1 forecast-qty" data-date="${date}" value="${qty}"></td>`;
+                    });
+                    tableHTML += `<td><button class="remove-btn px-2 py-1 bg-red-700 hover:bg-red-600 rounded text-xs">X</button></td>`;
+                    tableHTML += `</tr>`;
+                });
+                tableHTML += '</tbody></table>';
+
+                container.innerHTML = tableHTML;
+                container.querySelectorAll('.remove-btn').forEach(btn => {
+                    btn.onclick = (e) => e.target.closest('.forecast-row').remove();
+                });
+            }
+            
+            function applyProductSearch(searchCode, sourceInventory) {
+                const allCells = mainContent.querySelectorAll('.pallet-cell');
+                let matchCount = 0;
+
+                allCells.forEach(cell => {
+                    const address = cell.dataset.address;
+                    const data = sourceInventory[address];
+                    if (data && data.item.toUpperCase().includes(searchCode)) {
+                        cell.classList.add('search-highlight');
+                        cell.classList.remove('search-dimmed');
+                        matchCount++;
+                    } else {
+                        cell.classList.add('search-dimmed');
+                        cell.classList.remove('search-highlight');
+                    }
+                });
+
+                const searchStatus = document.getElementById('search-status');
+                if (searchStatus) {
+                    searchStatus.textContent = matchCount > 0
+                        ? `${matchCount} loca\u00e7\u00e3o(ões) encontrada(s)`
+                        : 'Nenhuma loca\u00e7\u00e3o encontrada';
+                }
+
+                const clearBtn = document.getElementById('clear-search-btn');
+                if (clearBtn) clearBtn.classList.remove('hidden');
+            }
+
+            function clearProductSearch() {
+                mainContent.querySelectorAll('.pallet-cell').forEach(cell => {
+                    cell.classList.remove('search-highlight', 'search-dimmed');
+                });
+                const searchStatus = document.getElementById('search-status');
+                if (searchStatus) searchStatus.textContent = '';
+                const clearBtn = document.getElementById('clear-search-btn');
+                if (clearBtn) clearBtn.classList.add('hidden');
+            }
+
+            function runSimulation(simulationDate) {
+                let simulatedInventory = JSON.parse(JSON.stringify(inventoryState));
+                
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+
+                const simDate = new Date(simulationDate + 'T00:00:00');
+                simDate.setHours(0,0,0,0);
+                
+                if (simDate < today) {
+                    const statusEl = document.getElementById('simulation-status');
+                    if(statusEl) statusEl.textContent = 'Não é possível simular para uma data passada.';
+                    setTimeout(() => { if(statusEl) statusEl.textContent = ''; }, 3000);
+                    return;
+                }
+                
+                const timeDiff = simDate.getTime() - today.getTime();
+                const dayDifference = Math.ceil(timeDiff / (1000 * 3600 * 24));
+                
+                for (let i = 0; i <= dayDifference; i++) {
+                    const currentSimDay = new Date(today.getTime() + i * (1000 * 3600 * 24));
+                    const currentSimDayString = currentSimDay.toISOString().split('T')[0];
+                    
+                    // A simulação de consumo (saídas via forecast) só ocorre a partir do dia seguinte (i > 0).
+                    // Para o dia atual (i = 0), apenas as chegadas programadas são consideradas no cálculo.
+                    if (i > 0) {
+                        const dailyConsumptionData = FORECAST_DATA[currentSimDayString] || {};
+
+                        for(const productCode in dailyConsumptionData){
+                            let consumptionNeeded = parseFloat(dailyConsumptionData[productCode]);
+                            if(isNaN(consumptionNeeded) || consumptionNeeded <= 0) continue;
+
+                            const addressesForProduct = Object.keys(simulatedInventory)
+                                .filter(addr => simulatedInventory[addr].item.toUpperCase() === productCode.toUpperCase())
+                                .sort(); 
+                            
+                            for(const address of addressesForProduct) {
+                                if(consumptionNeeded <= 0) break;
+                                
+                                let currentQty = parseFloat(simulatedInventory[address].quantity);
+                                const consumedFromThis = Math.min(currentQty, consumptionNeeded);
+                                
+                                currentQty -= consumedFromThis;
+                                consumptionNeeded -= consumedFromThis;
+
+                                if(currentQty <= 0) {
+                                    delete simulatedInventory[address];
+                                } else {
+                                    const productParam = PRODUCT_PARAMS_DATA.find(p => p.code.toUpperCase() === productCode.toUpperCase());
+                                    const maxQty = productParam ? parseFloat(productParam.maxQty) : 1;
+                                    simulatedInventory[address].quantity = currentQty;
+                                    simulatedInventory[address].percentage = maxQty > 0 ? (currentQty / maxQty) * 100 : 100;
+                                }
+                            }
+                        }
+                    }
+
+                    const arrivalsForThisDay = PROGRAMMING_DATA.filter(p => p.date === currentSimDayString);
+                    for (const arrival of arrivalsForThisDay) {
+                        let quantityToAllocate = parseFloat(arrival.quantity);
+                        if (isNaN(quantityToAllocate) || quantityToAllocate <= 0) continue;
+
+                        const productParam = PRODUCT_PARAMS_DATA.find(p => p.code.toUpperCase() === arrival.code.toUpperCase());
+                        const maxQty = productParam ? parseFloat(productParam.maxQty) : 1;
+                        if (maxQty <= 0) continue;
+
+                        const allLocations = [];
+                        for (let r = 1; r <= WAREHOUSE_CONFIG.totalRacks; r++) {
+                            const cols = WAREHOUSE_CONFIG.getColsForRack(r);
+                            const levelLettersReversed = [...WAREHOUSE_CONFIG.levelLetters].reverse();
+                            for (let c = 1; c <= cols; c++) {
+                                for (const level of levelLettersReversed) {
+                                    for (const s of WAREHOUSE_CONFIG.sides) {
+                                        allLocations.push(`PP${String(r).padStart(2, '0')}.${String(c).padStart(2, '0')}.${WAREHOUSE_CONFIG.levelMap[level]}.${s}`);
+                                    }
+                                }
+                            }
+                        }
+                        
+                        const partialPallets = allLocations
+                            .filter(addr => 
+                                simulatedInventory[addr] &&
+                                simulatedInventory[addr].item.toUpperCase() === arrival.code.toUpperCase() && 
+                                parseFloat(simulatedInventory[addr].quantity) < maxQty
+                            );
+                        
+                        for (const address of partialPallets) {
+                            if (quantityToAllocate <= 0) break;
+
+                            const pallet = simulatedInventory[address];
+                            const currentQty = parseFloat(pallet.quantity);
+                            const spaceAvailable = maxQty - currentQty;
+                            const qtyToAdd = Math.min(quantityToAllocate, spaceAvailable);
+
+                            pallet.quantity = currentQty + qtyToAdd;
+                            pallet.percentage = (pallet.quantity / maxQty) * 100;
+                            quantityToAllocate -= qtyToAdd;
+                        }
+
+                        if (quantityToAllocate > 0) {
+                            for(const address of allLocations){
+                                if(quantityToAllocate <= 0) break;
+                                if (!simulatedInventory[address]) {
+                                    const qtyForThisSlot = Math.min(quantityToAllocate, maxQty);
+                                    quantityToAllocate -= qtyForThisSlot;
+                                    simulatedInventory[address] = {
+                                        item: arrival.code,
+                                        quantity: qtyForThisSlot,
+                                        percentage: (qtyForThisSlot / maxQty) * 100
+                                    };
+                                }
+                            }
+                        }
+                    }
+                }
+
+                displayAllRacks(simulatedInventory, simulationDate);
+                updateGlobalStats(simulatedInventory);
+            }
+            
+
+            // --- INITIAL APP STARTUP ---
+            async function initialize() {
+                // Leitura pública habilitada nas regras do projeto ocupacao-de-pallet.
+                setupPalletCapacityListener();
+
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        userId = user.uid; // Capture the user ID
+                        if(isInitialLoad){
+                           setupRealtimeListener();
+                        }
+                    }
+                });
+                
+                const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+                if (initialAuthToken) {
+                    try {
+                        await signInWithCustomToken(auth, initialAuthToken);
+                    } catch (error) {
+                        console.error("Erro ao autenticar com token customizado, tentando anônimo.", error);
+                        if (!auth.currentUser) {
+                           await signInAnonymously(auth);
+                        }
+                    }
+                } else {
+                    await signInAnonymously(auth);
+                }
+            }
+
+            initialize();
+        });
+    </script>
+</body>
+</html>
