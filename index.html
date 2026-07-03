@@ -6,6 +6,7 @@
     <title>MRP - Módulo de Estoque</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -124,7 +125,7 @@
     <!-- Firebase SDKs - Updated to v11.6.1 -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getFirestore, doc, setDoc, getDoc, onSnapshot, collection } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, getDoc, onSnapshot, collection, getDocs, query, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken, GoogleAuthProvider, signInWithPopup } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 
         document.addEventListener('DOMContentLoaded', () => {
@@ -198,6 +199,12 @@
             };
             
             let selectedCell = null;
+            let graficoOcupacaoHist = null;
+            let currentDashboardStats = null;
+            let todosOsDadosHist = [];
+            let modoVistaHist = 'diario';
+            let filtroHistInicioAtivo = null;
+            let filtroHistFimAtivo = null;
 
             function updateGlobalStats(sourceInventory = inventoryState) {
                 let grandTotalPositions = 0;
@@ -732,8 +739,346 @@
                 analysisContainer.appendChild(movementsContainer);
                 analysisContainer.appendChild(stockAnalysisContainer);
                 mainContent.appendChild(analysisContainer);
+
+                // Salva stats atuais para uso no botão "Registrar Coleta"
+                currentDashboardStats = {
+                    ocu: parseFloat(globalPercentage),
+                    pos: totalOccupied,
+                    ite: Math.round(totalItems)
+                };
+
+                // ── SEÇÃO DE HISTÓRICO ──
+                const histSection = document.createElement('div');
+                histSection.className = 'mt-8';
+
+                const histTitle = document.createElement('h3');
+                histTitle.className = 'text-xl font-semibold mb-4 text-amber-400';
+                histTitle.textContent = '📈 Histórico de Ocupação — Porta Pallets';
+                histSection.appendChild(histTitle);
+
+                // Card do gráfico
+                const chartCard = document.createElement('div');
+                chartCard.className = 'bg-gray-800 p-6 rounded-lg shadow-lg mb-6';
+                chartCard.innerHTML = `
+                    <div class="flex flex-wrap justify-between items-center mb-4 gap-3">
+                        <div class="flex items-center gap-3 flex-wrap">
+                            <span class="text-white font-semibold">Ocupação ao Longo do Tempo (%)</span>
+                            <div class="flex rounded-lg overflow-hidden border border-gray-600">
+                                <button id="btnMododiario" class="text-xs px-3 py-1.5 font-semibold transition-colors bg-amber-700 text-white">Diário</button>
+                                <button id="btnModoMensal" class="text-xs px-3 py-1.5 font-semibold transition-colors bg-gray-700 text-gray-300 hover:bg-gray-600">Mensal</button>
+                            </div>
+                        </div>
+                        <button id="btnRegistrarColeta" class="text-xs bg-teal-700 hover:bg-teal-600 text-white font-semibold px-3 py-1.5 rounded-lg transition-colors">+ Registrar Coleta Atual</button>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-3 mb-5 p-3 bg-gray-700/50 rounded-lg">
+                        <span class="text-xs text-gray-400 font-semibold uppercase tracking-wide">Filtrar período:</span>
+                        <div class="flex items-center gap-2">
+                            <label class="text-xs text-gray-400">De</label>
+                            <input type="date" id="filtroHistInicio" class="text-xs bg-gray-700 text-gray-200 border border-gray-600 rounded px-2 py-1 focus:outline-none focus:border-amber-500">
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <label class="text-xs text-gray-400">Até</label>
+                            <input type="date" id="filtroHistFim" class="text-xs bg-gray-700 text-gray-200 border border-gray-600 rounded px-2 py-1 focus:outline-none focus:border-amber-500">
+                        </div>
+                        <button id="btnAplicarFiltroHist" class="text-xs bg-amber-700 hover:bg-amber-600 text-white font-semibold px-3 py-1 rounded transition-colors">Aplicar</button>
+                        <button id="btnLimparFiltroHist" class="text-xs bg-gray-600 hover:bg-gray-500 text-gray-200 font-semibold px-3 py-1 rounded transition-colors">Limpar</button>
+                        <span id="labelFiltroAtivo" class="text-xs text-amber-400 font-semibold"></span>
+                    </div>
+                    <div style="height:280px; position:relative;">
+                        <canvas id="canvasOcupacaoHist"></canvas>
+                    </div>
+                `;
+                histSection.appendChild(chartCard);
+
+                // Card da tabela de histórico
+                const tableCard = document.createElement('div');
+                tableCard.className = 'bg-gray-800 p-6 rounded-lg shadow-lg';
+                tableCard.innerHTML = `
+                    <h4 class="text-white font-semibold mb-4" id="tituloTabelaHist">Histórico de Coletas</h4>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm text-left">
+                            <thead class="text-xs text-gray-400 uppercase border-b border-gray-700">
+                                <tr>
+                                    <th class="py-2 pr-4" id="thDataHist">Data / Hora</th>
+                                    <th class="py-2 pr-4">Ocupação</th>
+                                    <th class="py-2 pr-4">Posições</th>
+                                    <th class="py-2">Total de Itens</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tbodyOcupacaoHist">
+                                <tr><td colspan="4" class="py-4 text-gray-400 text-center">Carregando...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+                histSection.appendChild(tableCard);
+                mainContent.appendChild(histSection);
+
+                // Wiring dos botões
+                document.getElementById('btnMododiario').addEventListener('click', () => alternarModoVista('diario'));
+                document.getElementById('btnModoMensal').addEventListener('click', () => alternarModoVista('mensal'));
+                document.getElementById('btnRegistrarColeta').addEventListener('click', registrarColetaAtual);
+                document.getElementById('btnAplicarFiltroHist').addEventListener('click', aplicarFiltroHist);
+                document.getElementById('btnLimparFiltroHist').addEventListener('click', limparFiltroHist);
+
+                // Carrega histórico do Firestore
+                carregarOcupacaoHistorico();
             }
 
+            // ── HISTÓRICO DE OCUPAÇÃO — FUNÇÕES ──
+            const SEED_OCUPACAO = [
+                {ts:'2026-06-17 09:44', ocu:70.7, pos:3953, ite:911042},
+                {ts:'2026-06-19 08:46', ocu:66.3, pos:3705, ite:897823},
+                {ts:'2026-06-22 10:24', ocu:63.2, pos:3533, ite:896164},
+                {ts:'2026-06-23 08:46', ocu:61.0, pos:3410, ite:879651},
+                {ts:'2026-06-25 14:15', ocu:58.4, pos:3268, ite:894294},
+                {ts:'2026-06-26 09:12', ocu:58.1, pos:3247, ite:893112},
+                {ts:'2026-06-29 13:16', ocu:55.8, pos:3121, ite:889482},
+                {ts:'2026-06-30 09:42', ocu:55.2, pos:3088, ite:888824},
+                {ts:'2026-07-01 08:51', ocu:58.9, pos:3295, ite:883086},
+                {ts:'2026-07-02 14:21', ocu:65.2, pos:3646, ite:886087},
+                {ts:'2026-07-03 08:56', ocu:68.7, pos:3843, ite:883756},
+            ];
+
+            async function carregarOcupacaoHistorico() {
+                try {
+                    const q = query(collection(db, 'ocupacaoHistorico'), orderBy('ts'));
+                    const snap = await getDocs(q);
+                    if (!snap.empty) {
+                        todosOsDadosHist = snap.docs.map(d => d.data());
+                    } else {
+                        for (const entry of SEED_OCUPACAO) {
+                            const id = entry.ts.replace(/[: ]/g, '-');
+                            await setDoc(doc(db, 'ocupacaoHistorico', id), entry);
+                        }
+                        todosOsDadosHist = [...SEED_OCUPACAO];
+                    }
+                } catch(e) {
+                    console.warn('Histórico de ocupação:', e);
+                    todosOsDadosHist = [...SEED_OCUPACAO];
+                }
+                atualizarVistaHist();
+            }
+
+            function getDadosFiltrados() {
+                const agora = new Date();
+                let dados = [...todosOsDadosHist];
+
+                if (filtroHistInicioAtivo || filtroHistFimAtivo) {
+                    dados = dados.filter(d => {
+                        const dia = d.ts.substring(0, 10);
+                        if (filtroHistInicioAtivo && dia < filtroHistInicioAtivo) return false;
+                        if (filtroHistFimAtivo   && dia > filtroHistFimAtivo)   return false;
+                        return true;
+                    });
+                } else if (modoVistaHist === 'diario') {
+                    const limite = new Date(agora);
+                    limite.setDate(limite.getDate() - 30);
+                    const limiteStr = limite.toISOString().substring(0, 10);
+                    dados = dados.filter(d => d.ts.substring(0, 10) >= limiteStr);
+                } else {
+                    const limite = new Date(agora);
+                    limite.setFullYear(limite.getFullYear() - 1);
+                    const limiteStr = limite.toISOString().substring(0, 7);
+                    dados = dados.filter(d => d.ts.substring(0, 7) >= limiteStr);
+                }
+                return dados;
+            }
+
+            function agruparPorMes(dados) {
+                const meses = {};
+                dados.forEach(d => {
+                    const mes = d.ts.substring(0, 7);
+                    if (!meses[mes] || d.ocu > meses[mes].ocu) meses[mes] = d;
+                });
+                return Object.keys(meses).sort().map(m => meses[m]);
+            }
+
+            function atualizarVistaHist() {
+                const dadosFiltrados = getDadosFiltrados();
+                const isMensal = modoVistaHist === 'mensal';
+                const MESES_ABREV = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+                const MESES_EXT   = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+
+                let pontos;
+                let labels;
+
+                if (isMensal) {
+                    pontos = agruparPorMes(dadosFiltrados);
+                    labels = pontos.map(d => {
+                        const [y, m] = d.ts.substring(0, 7).split('-');
+                        return `${MESES_ABREV[parseInt(m)-1]}/${y.substring(2)}`;
+                    });
+                } else {
+                    pontos = dadosFiltrados;
+                    labels = pontos.map(d => {
+                        const [date] = d.ts.split(' ');
+                        const [y, m, day] = date.split('-');
+                        return `${day}/${m}`;
+                    });
+                }
+
+                const values = pontos.map(d => d.ocu);
+
+                // ── Gráfico ──
+                const canvas = document.getElementById('canvasOcupacaoHist');
+                if (canvas) {
+                    if (graficoOcupacaoHist) graficoOcupacaoHist.destroy();
+                    graficoOcupacaoHist = new Chart(canvas.getContext('2d'), {
+                        type: 'line',
+                        data: {
+                            labels,
+                            datasets: [{
+                                label: 'Ocupação (%)',
+                                data: values,
+                                borderColor: '#f59e0b',
+                                backgroundColor: 'rgba(245,158,11,0.08)',
+                                fill: true,
+                                tension: 0.35,
+                                pointRadius: 5,
+                                pointHoverRadius: 7,
+                                pointBackgroundColor: '#f59e0b',
+                                pointBorderColor: '#1f2937',
+                                pointBorderWidth: 2,
+                                borderWidth: 2.5,
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: { display: false },
+                                tooltip: {
+                                    callbacks: {
+                                        title: (items) => {
+                                            const d = pontos[items[0].dataIndex];
+                                            if (isMensal) {
+                                                const [y, m] = d.ts.substring(0, 7).split('-');
+                                                return `${MESES_EXT[parseInt(m)-1]} ${y} (Pico)`;
+                                            }
+                                            return d.ts;
+                                        },
+                                        label: ctx => ` Ocupação: ${ctx.parsed.y.toFixed(1)}%`,
+                                        afterLabel: (ctx) => {
+                                            const d = pontos[ctx.dataIndex];
+                                            return [
+                                                `Posições: ${d.pos.toLocaleString('pt-BR')}`,
+                                                `Itens: ${d.ite.toLocaleString('pt-BR')}`
+                                            ];
+                                        }
+                                    }
+                                }
+                            },
+                            scales: {
+                                y: {
+                                    min: values.length ? Math.max(0, Math.min(...values) - 8) : 0,
+                                    max: values.length ? Math.min(100, Math.max(...values) + 8) : 100,
+                                    ticks: { callback: v => v + '%', color: '#9ca3af', font: { size: 11 } },
+                                    grid: { color: 'rgba(255,255,255,0.05)' }
+                                },
+                                x: {
+                                    ticks: { color: '#9ca3af', font: { size: 11 }, maxRotation: 45 },
+                                    grid: { display: false }
+                                }
+                            }
+                        }
+                    });
+                }
+
+                // ── Tabela ──
+                const tbody = document.getElementById('tbodyOcupacaoHist');
+                const titulo = document.getElementById('tituloTabelaHist');
+                const thData = document.getElementById('thDataHist');
+
+                if (titulo) titulo.textContent = isMensal ? 'Histórico Mensal (Pico de Ocupação)' : 'Histórico de Coletas';
+                if (thData) thData.textContent = isMensal ? 'Mês' : 'Data / Hora';
+
+                if (!tbody) return;
+                if (!pontos.length) {
+                    tbody.innerHTML = `<tr><td colspan="4" class="py-4 text-gray-400 text-center">Nenhum dado no período selecionado.</td></tr>`;
+                    return;
+                }
+
+                const rev = [...pontos].reverse();
+                tbody.innerHTML = rev.map((d, i) => {
+                    let dateFmt;
+                    if (isMensal) {
+                        const [y, m] = d.ts.substring(0, 7).split('-');
+                        dateFmt = `${MESES_ABREV[parseInt(m)-1]}/${y}`;
+                    } else {
+                        const [date, time] = d.ts.split(' ');
+                        const [y, m, day] = date.split('-');
+                        dateFmt = `${day}/${m}/${y} ${time}`;
+                    }
+                    const badge = d.ocu >= 65
+                        ? `<span class="bg-amber-900/40 text-amber-400 px-2 py-0.5 rounded-full text-xs font-bold">${d.ocu.toFixed(1)}% Alto</span>`
+                        : d.ocu >= 55
+                        ? `<span class="bg-blue-900/40 text-blue-400 px-2 py-0.5 rounded-full text-xs font-bold">${d.ocu.toFixed(1)}% Médio</span>`
+                        : `<span class="bg-green-900/40 text-green-400 px-2 py-0.5 rounded-full text-xs font-bold">${d.ocu.toFixed(1)}% Baixo</span>`;
+                    const rowCls = i === 0 ? 'border-b border-gray-700 bg-amber-900/10' : 'border-b border-gray-700';
+                    return `<tr class="${rowCls}">
+                        <td class="py-2 pr-4 text-gray-300">${dateFmt}${i===0?' <span class="text-amber-400 text-xs">●</span>':''}</td>
+                        <td class="py-2 pr-4">${badge}</td>
+                        <td class="py-2 pr-4 text-gray-300">${d.pos.toLocaleString('pt-BR')}</td>
+                        <td class="py-2 text-gray-300">${d.ite.toLocaleString('pt-BR')}</td>
+                    </tr>`;
+                }).join('');
+            }
+
+            function alternarModoVista(modo) {
+                modoVistaHist = modo;
+                const btnD = document.getElementById('btnMododiario');
+                const btnM = document.getElementById('btnModoMensal');
+                const ativo   = 'text-xs px-3 py-1.5 font-semibold transition-colors bg-amber-700 text-white';
+                const inativo = 'text-xs px-3 py-1.5 font-semibold transition-colors bg-gray-700 text-gray-300 hover:bg-gray-600';
+                if (btnD) btnD.className = modo === 'diario' ? ativo : inativo;
+                if (btnM) btnM.className = modo === 'mensal' ? ativo : inativo;
+                atualizarVistaHist();
+            }
+
+            function aplicarFiltroHist() {
+                filtroHistInicioAtivo = document.getElementById('filtroHistInicio')?.value || null;
+                filtroHistFimAtivo    = document.getElementById('filtroHistFim')?.value    || null;
+                const label = document.getElementById('labelFiltroAtivo');
+                if (label) {
+                    if (filtroHistInicioAtivo || filtroHistFimAtivo) {
+                        const fmt = s => s ? s.split('-').reverse().join('/') : '…';
+                        label.textContent = `📅 ${fmt(filtroHistInicioAtivo)} → ${fmt(filtroHistFimAtivo)}`;
+                    } else {
+                        label.textContent = '';
+                    }
+                }
+                atualizarVistaHist();
+            }
+
+            function limparFiltroHist() {
+                filtroHistInicioAtivo = null;
+                filtroHistFimAtivo    = null;
+                const i = document.getElementById('filtroHistInicio');
+                const f = document.getElementById('filtroHistFim');
+                const l = document.getElementById('labelFiltroAtivo');
+                if (i) i.value = '';
+                if (f) f.value = '';
+                if (l) l.textContent = '';
+                atualizarVistaHist();
+            }
+
+            async function registrarColetaAtual() {
+                if (!currentDashboardStats) return;
+                const { ocu, pos, ite } = currentDashboardStats;
+                const now = new Date();
+                const pad = n => String(n).padStart(2, '0');
+                const ts = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+                try {
+                    await setDoc(doc(db, 'ocupacaoHistorico', ts.replace(/[: ]/g, '-')), { ts, ocu, pos, ite });
+                    await carregarOcupacaoHistorico();
+                } catch(e) {
+                    console.error('Erro ao registrar coleta:', e);
+                    alert('Erro ao salvar coleta. Verifique a conexão.');
+                }
+            }
+
+            // ── FIM HISTÓRICO ──
 
             function createRackGridElement(rackNumber, sourceInventory = inventoryState) {
                 const cols = WAREHOUSE_CONFIG.getColsForRack(rackNumber);
@@ -1599,220 +1944,4 @@
                 sortedDates.forEach(date => {
                     const dateObj = new Date(date + 'T00:00:00');
                     const formattedDate = isNaN(dateObj) ? 'Data Inválida' : dateObj.toLocaleDateString('pt-BR');
-                    tableHTML += `<th class="p-2 text-center">${formattedDate}</th>`;
-                });
-                tableHTML += '<th></th></tr></thead>';
-                
-                tableHTML += '<tbody>';
-                Object.keys(productForecasts).sort().forEach(productCode => {
-                    tableHTML += `<tr class="forecast-row border-b border-gray-700">`;
-                    tableHTML += `<td class="p-2 font-semibold forecast-code sticky left-0 bg-gray-900">${productCode}</td>`;
-                    sortedDates.forEach(date => {
-                        const qty = productForecasts[productCode][date] || 0;
-                        tableHTML += `<td class="p-1"><input type="number" class="w-24 bg-gray-700 text-center rounded p-1 forecast-qty" data-date="${date}" value="${qty}"></td>`;
-                    });
-                    tableHTML += `<td><button class="remove-btn px-2 py-1 bg-red-700 hover:bg-red-600 rounded text-xs">X</button></td>`;
-                    tableHTML += `</tr>`;
-                });
-                tableHTML += '</tbody></table>';
-
-                container.innerHTML = tableHTML;
-                container.querySelectorAll('.remove-btn').forEach(btn => {
-                    btn.onclick = (e) => e.target.closest('.forecast-row').remove();
-                });
-            }
-            
-            function applyProductSearch(searchCode, sourceInventory) {
-                const allCells = mainContent.querySelectorAll('.pallet-cell');
-                let matchCount = 0;
-
-                allCells.forEach(cell => {
-                    const address = cell.dataset.address;
-                    const data = sourceInventory[address];
-                    if (data && data.item.toUpperCase().includes(searchCode)) {
-                        cell.classList.add('search-highlight');
-                        cell.classList.remove('search-dimmed');
-                        matchCount++;
-                    } else {
-                        cell.classList.add('search-dimmed');
-                        cell.classList.remove('search-highlight');
-                    }
-                });
-
-                const searchStatus = document.getElementById('search-status');
-                if (searchStatus) {
-                    searchStatus.textContent = matchCount > 0
-                        ? `${matchCount} loca\u00e7\u00e3o(ões) encontrada(s)`
-                        : 'Nenhuma loca\u00e7\u00e3o encontrada';
-                }
-
-                const clearBtn = document.getElementById('clear-search-btn');
-                if (clearBtn) clearBtn.classList.remove('hidden');
-            }
-
-            function clearProductSearch() {
-                mainContent.querySelectorAll('.pallet-cell').forEach(cell => {
-                    cell.classList.remove('search-highlight', 'search-dimmed');
-                });
-                const searchStatus = document.getElementById('search-status');
-                if (searchStatus) searchStatus.textContent = '';
-                const clearBtn = document.getElementById('clear-search-btn');
-                if (clearBtn) clearBtn.classList.add('hidden');
-            }
-
-            function runSimulation(simulationDate) {
-                let simulatedInventory = JSON.parse(JSON.stringify(inventoryState));
-                
-                const today = new Date();
-                today.setHours(0, 0, 0, 0);
-
-                const simDate = new Date(simulationDate + 'T00:00:00');
-                simDate.setHours(0,0,0,0);
-                
-                if (simDate < today) {
-                    const statusEl = document.getElementById('simulation-status');
-                    if(statusEl) statusEl.textContent = 'Não é possível simular para uma data passada.';
-                    setTimeout(() => { if(statusEl) statusEl.textContent = ''; }, 3000);
-                    return;
-                }
-                
-                const timeDiff = simDate.getTime() - today.getTime();
-                const dayDifference = Math.ceil(timeDiff / (1000 * 3600 * 24));
-                
-                for (let i = 0; i <= dayDifference; i++) {
-                    const currentSimDay = new Date(today.getTime() + i * (1000 * 3600 * 24));
-                    const currentSimDayString = currentSimDay.toISOString().split('T')[0];
-                    
-                    // A simulação de consumo (saídas via forecast) só ocorre a partir do dia seguinte (i > 0).
-                    // Para o dia atual (i = 0), apenas as chegadas programadas são consideradas no cálculo.
-                    if (i > 0) {
-                        const dailyConsumptionData = FORECAST_DATA[currentSimDayString] || {};
-
-                        for(const productCode in dailyConsumptionData){
-                            let consumptionNeeded = parseFloat(dailyConsumptionData[productCode]);
-                            if(isNaN(consumptionNeeded) || consumptionNeeded <= 0) continue;
-
-                            const addressesForProduct = Object.keys(simulatedInventory)
-                                .filter(addr => simulatedInventory[addr].item.toUpperCase() === productCode.toUpperCase())
-                                .sort(); 
-                            
-                            for(const address of addressesForProduct) {
-                                if(consumptionNeeded <= 0) break;
-                                
-                                let currentQty = parseFloat(simulatedInventory[address].quantity);
-                                const consumedFromThis = Math.min(currentQty, consumptionNeeded);
-                                
-                                currentQty -= consumedFromThis;
-                                consumptionNeeded -= consumedFromThis;
-
-                                if(currentQty <= 0) {
-                                    delete simulatedInventory[address];
-                                } else {
-                                    const productParam = PRODUCT_PARAMS_DATA.find(p => p.code.toUpperCase() === productCode.toUpperCase());
-                                    const maxQty = productParam ? parseFloat(productParam.maxQty) : 1;
-                                    simulatedInventory[address].quantity = currentQty;
-                                    simulatedInventory[address].percentage = maxQty > 0 ? (currentQty / maxQty) * 100 : 100;
-                                }
-                            }
-                        }
-                    }
-
-                    const arrivalsForThisDay = PROGRAMMING_DATA.filter(p => p.date === currentSimDayString);
-                    for (const arrival of arrivalsForThisDay) {
-                        let quantityToAllocate = parseFloat(arrival.quantity);
-                        if (isNaN(quantityToAllocate) || quantityToAllocate <= 0) continue;
-
-                        const productParam = PRODUCT_PARAMS_DATA.find(p => p.code.toUpperCase() === arrival.code.toUpperCase());
-                        const maxQty = productParam ? parseFloat(productParam.maxQty) : 1;
-                        if (maxQty <= 0) continue;
-
-                        const allLocations = [];
-                        for (let r = 1; r <= WAREHOUSE_CONFIG.totalRacks; r++) {
-                            const cols = WAREHOUSE_CONFIG.getColsForRack(r);
-                            const levelLettersReversed = [...WAREHOUSE_CONFIG.levelLetters].reverse();
-                            for (let c = 1; c <= cols; c++) {
-                                for (const level of levelLettersReversed) {
-                                    for (const s of WAREHOUSE_CONFIG.sides) {
-                                        allLocations.push(`PP${String(r).padStart(2, '0')}.${String(c).padStart(2, '0')}.${WAREHOUSE_CONFIG.levelMap[level]}.${s}`);
-                                    }
-                                }
-                            }
-                        }
-                        
-                        const partialPallets = allLocations
-                            .filter(addr => 
-                                simulatedInventory[addr] &&
-                                simulatedInventory[addr].item.toUpperCase() === arrival.code.toUpperCase() && 
-                                parseFloat(simulatedInventory[addr].quantity) < maxQty
-                            );
-                        
-                        for (const address of partialPallets) {
-                            if (quantityToAllocate <= 0) break;
-
-                            const pallet = simulatedInventory[address];
-                            const currentQty = parseFloat(pallet.quantity);
-                            const spaceAvailable = maxQty - currentQty;
-                            const qtyToAdd = Math.min(quantityToAllocate, spaceAvailable);
-
-                            pallet.quantity = currentQty + qtyToAdd;
-                            pallet.percentage = (pallet.quantity / maxQty) * 100;
-                            quantityToAllocate -= qtyToAdd;
-                        }
-
-                        if (quantityToAllocate > 0) {
-                            for(const address of allLocations){
-                                if(quantityToAllocate <= 0) break;
-                                if (!simulatedInventory[address]) {
-                                    const qtyForThisSlot = Math.min(quantityToAllocate, maxQty);
-                                    quantityToAllocate -= qtyForThisSlot;
-                                    simulatedInventory[address] = {
-                                        item: arrival.code,
-                                        quantity: qtyForThisSlot,
-                                        percentage: (qtyForThisSlot / maxQty) * 100
-                                    };
-                                }
-                            }
-                        }
-                    }
-                }
-
-                displayAllRacks(simulatedInventory, simulationDate);
-                updateGlobalStats(simulatedInventory);
-            }
-            
-
-            // --- INITIAL APP STARTUP ---
-            async function initialize() {
-                // Leitura pública habilitada nas regras do projeto ocupacao-de-pallet.
-                setupPalletCapacityListener();
-
-                onAuthStateChanged(auth, async (user) => {
-                    if (user) {
-                        userId = user.uid; // Capture the user ID
-                        if(isInitialLoad){
-                           setupRealtimeListener();
-                        }
-                    }
-                });
-                
-                const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-                if (initialAuthToken) {
-                    try {
-                        await signInWithCustomToken(auth, initialAuthToken);
-                    } catch (error) {
-                        console.error("Erro ao autenticar com token customizado, tentando anônimo.", error);
-                        if (!auth.currentUser) {
-                           await signInAnonymously(auth);
-                        }
-                    }
-                } else {
-                    await signInAnonymously(auth);
-                }
-            }
-
-            initialize();
-        });
-    </script>
-</body>
-</html>
-
+                    tableHTML += `<th class="p
