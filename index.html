@@ -2133,9 +2133,6 @@
                         const partialPallets = allLocations
                             .filter(addr => 
                                 simulatedInventory[addr] &&
-                        const partialPallets = allLocations
-                            .filter(addr => 
-                                simulatedInventory[addr] &&
                                 simulatedInventory[addr].item.toUpperCase() === arrival.code.toUpperCase() && 
                                 parseFloat(simulatedInventory[addr].quantity) < maxQty
                             );
@@ -2209,4 +2206,3 @@
     </script>
 </body>
 </html>
-
