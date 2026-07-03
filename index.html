@@ -1063,20 +1063,52 @@
                 atualizarVistaHist();
             }
 
-            async function registrarColetaAtual() {
+            async function registrarColetaAtual(silent = false) {
                 if (!currentDashboardStats) return;
                 const { ocu, pos, ite } = currentDashboardStats;
                 const now = new Date();
                 const pad = n => String(n).padStart(2, '0');
-                const ts = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+                const dateKey = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}`;
+                const ts = `${dateKey} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
                 try {
-                    await setDoc(doc(db, 'ocupacaoHistorico', ts.replace(/[: ]/g, '-')), { ts, ocu, pos, ite });
+                    // Pico diário: só salva se for a maior ocupação do dia
+                    const existingSnap = await getDoc(doc(db, 'ocupacaoHistorico', dateKey));
+                    if (existingSnap.exists() && existingSnap.data().ocu >= ocu) {
+                        if (!silent) alert(`Ocupação atual (${ocu.toFixed(1)}%) não supera o pico do dia (${existingSnap.data().ocu.toFixed(1)}%). Nenhum registro atualizado.`);
+                        return;
+                    }
+                    await setDoc(doc(db, 'ocupacaoHistorico', dateKey), { ts, ocu, pos, ite });
                     await carregarOcupacaoHistorico();
+                    if (!silent) alert(`Pico do dia registrado: ${ocu.toFixed(1)}% às ${ts.split(' ')[1]}`);
                 } catch(e) {
                     console.error('Erro ao registrar coleta:', e);
-                    alert('Erro ao salvar coleta. Verifique a conexão.');
+                    if (!silent) alert('Erro ao salvar coleta. Verifique a conexão com o Firebase.');
                 }
             }
+
+            // Expõe registro automático para o workflow executar
+            window._tbxAutoRegistrar = async (ocuVal, posVal, iteVal) => {
+                const now = new Date();
+                const pad = n => String(n).padStart(2, '0');
+                const dateKey = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}`;
+                const ts = `${dateKey} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+                try {
+                    const existingSnap = await getDoc(doc(db, 'ocupacaoHistorico', dateKey));
+                    if (existingSnap.exists() && existingSnap.data().ocu >= ocuVal) {
+                        console.log(`[AutoRegistro] Pico atual (${existingSnap.data().ocu}%) >= novo (${ocuVal}%). Ignorado.`);
+                        return 'skipped';
+                    }
+                    await setDoc(doc(db, 'ocupacaoHistorico', dateKey), { ts, ocu: ocuVal, pos: posVal, ite: iteVal });
+                    console.log(`[AutoRegistro] Pico do dia salvo: ${ocuVal}% às ${ts}`);
+                    todosOsDadosHist = todosOsDadosHist.filter(d => d.ts.substring(0,10) !== dateKey);
+                    todosOsDadosHist.push({ ts, ocu: ocuVal, pos: posVal, ite: iteVal });
+                    todosOsDadosHist.sort((a,b) => a.ts.localeCompare(b.ts));
+                    return 'saved';
+                } catch(e) {
+                    console.error('[AutoRegistro] Erro:', e);
+                    return 'error: ' + e.message;
+                }
+            };
 
             // ── FIM HISTÓRICO ──
 
