@@ -867,6 +867,13 @@
                         todosOsDadosHist = [...firestoreDados, ...seedFaltantes]
                             .sort((a, b) => a.ts.localeCompare(b.ts));
                     }
+                    // Deduplica por dia: mantém somente o pico (maior ocu) de cada data
+                    const _peakByDay = {};
+                    todosOsDadosHist.forEach(d => {
+                        const day = d.ts.substring(0, 10);
+                        if (!_peakByDay[day] || d.ocu > _peakByDay[day].ocu) _peakByDay[day] = d;
+                    });
+                    todosOsDadosHist = Object.values(_peakByDay).sort((a, b) => a.ts.localeCompare(b.ts));
                 } catch(e) {
                     console.warn('Histórico de ocupação:', e);
                     todosOsDadosHist = [...SEED_OCUPACAO];
