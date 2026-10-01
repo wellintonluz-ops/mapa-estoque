@@ -421,7 +421,7 @@
 
                 const subtitle = document.createElement('p');
                 subtitle.className = 'text-gray-400 text-sm mb-6';
-                subtitle.textContent = 'Consolida\u00e7\u00e3o de posi\u00e7\u00f5es parciais: retira das menores e aloca nas maiores at\u00e9 completar a capacidade m\u00e1xima do pallet.';
+                subtitle.textContent = 'Consolida\u00e7\u00e3o de posi\u00e7\u00f5es parciais: retira das menores e aloca nas maiores at\u00e9 completar a capacidade m\u00e1xima do pallet. S\u00e3o exibidas apenas as movimenta\u00e7\u00f5es que liberam uma posi\u00e7\u00e3o.';
                 mainContent.appendChild(subtitle);
 
                 if (PRODUCT_PARAMS_DATA.length === 0) {
@@ -492,7 +492,9 @@
                         trip.totalQty += move.qty;
                         trip.destinations.push({ to: move.to, qty: move.qty, toPct: move.toPct, space: move.spaceInReceiver });
                     });
-                    const trips = Array.from(tripMap.values());
+                    // Mostra somente as viagens que esvaziam a posição de origem (liberam vaga)
+                    const emptiedAddresses = new Set(sim.filter(p => p.qty < 0.01).map(p => p.address));
+                    const trips = Array.from(tripMap.values()).filter(trip => emptiedAddresses.has(trip.from));
 
                     const freedPositions = sim.filter(p => p.qty < 0.01).length;
                     totalFreedPositions += freedPositions;
@@ -867,13 +869,6 @@
                         todosOsDadosHist = [...firestoreDados, ...seedFaltantes]
                             .sort((a, b) => a.ts.localeCompare(b.ts));
                     }
-                    // Deduplica por dia: mantém somente o pico (maior ocu) de cada data
-                    const _peakByDay = {};
-                    todosOsDadosHist.forEach(d => {
-                        const day = d.ts.substring(0, 10);
-                        if (!_peakByDay[day] || d.ocu > _peakByDay[day].ocu) _peakByDay[day] = d;
-                    });
-                    todosOsDadosHist = Object.values(_peakByDay).sort((a, b) => a.ts.localeCompare(b.ts));
                 } catch(e) {
                     console.warn('Histórico de ocupação:', e);
                     todosOsDadosHist = [...SEED_OCUPACAO];
