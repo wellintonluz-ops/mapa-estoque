@@ -223,6 +223,7 @@
                 globalStatsPanel.innerHTML = `
                     <span class="font-semibold text-white">Total de Posições: ${grandTotalPositions.toLocaleString('pt-BR')}</span> | 
                     <span class="font-semibold text-red-400">Posições Ocupadas: ${totalOccupied.toLocaleString('pt-BR')}</span> | 
+                    <span class="font-semibold text-green-400">Posições Livres: ${Math.max(grandTotalPositions - totalOccupied, 0).toLocaleString('pt-BR')}</span> | 
                     <span class="font-bold text-amber-400">Ocupação (Posições): ${globalPercentage}%</span> |
                     <span class="font-semibold text-cyan-400">Soma Total de Itens: ${Math.round(totalItems).toLocaleString('pt-BR')}</span>
                 `;
@@ -819,7 +820,7 @@
                 // Wiring dos botões
                 document.getElementById('btnMododiario').addEventListener('click', () => alternarModoVista('diario'));
                 document.getElementById('btnModoMensal').addEventListener('click', () => alternarModoVista('mensal'));
-                document.getElementById('btnRegistrarColeta').addEventListener('click', registrarColetaAtual);
+                document.getElementById('btnRegistrarColeta').addEventListener('click', () => registrarColetaAtual(false));
                 document.getElementById('btnAplicarFiltroHist').addEventListener('click', aplicarFiltroHist);
                 document.getElementById('btnLimparFiltroHist').addEventListener('click', limparFiltroHist);
 
@@ -855,18 +856,25 @@
                     if (firestoreDados.length === 0) {
                         // Sem dados no Firestore: tenta semear
                         for (const entry of SEED_OCUPACAO) {
-                            const id = entry.ts.replace(/[: ]/g, '-');
+                            const id = entry.ts.substring(0, 10); // ID = data (um documento por dia)
                             try { await setDoc(doc(db, 'ocupacaoHistorico', id), entry); } catch(_) {}
                         }
                         todosOsDadosHist = [...SEED_OCUPACAO];
                     } else {
                         // Tenta salvar entradas do SEED que faltam no Firestore
                         for (const entry of seedFaltantes) {
-                            const id = entry.ts.replace(/[: ]/g, '-');
+                            const id = entry.ts.substring(0, 10); // ID = data (um documento por dia)
                             try { await setDoc(doc(db, 'ocupacaoHistorico', id), entry); } catch(_) {}
                         }
                         // Mescla localmente para exibição (mesmo que escrita falhe por permissões)
-                        todosOsDadosHist = [...firestoreDados, ...seedFaltantes]
+                        // Um registro por dia: se houver duplicados da mesma data, mantém o de maior ocupação
+                        const porDia = new Map();
+                        [...firestoreDados, ...seedFaltantes].forEach(d => {
+                            const dia = d.ts.substring(0, 10);
+                            const atual = porDia.get(dia);
+                            if (!atual || d.ocu > atual.ocu) porDia.set(dia, d);
+                        });
+                        todosOsDadosHist = [...porDia.values()]
                             .sort((a, b) => a.ts.localeCompare(b.ts));
                     }
                 } catch(e) {
@@ -2207,4 +2215,4 @@
         });
     </script>
 </body>
-</html>
+</html>
